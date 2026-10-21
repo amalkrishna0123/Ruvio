@@ -2,15 +2,15 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, ShieldCheck, ArrowRight } from "lucide-react";
-import { PrimaryButton } from "@/components/common";
+import Image from "next/image";
+import { ArrowRight, ShieldCheck, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
   const [userNumber, setUserNumber] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [showNumber, setShowNumber] = useState(false);
 
   const handleSendOTP = (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,7 +22,6 @@ export default function LoginPage() {
       setError("User Number must be exactly 6 digits");
       return;
     }
-
     setError("");
     setIsLoading(true);
     setTimeout(() => {
@@ -31,69 +30,163 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-dvh flex-col justify-between p-6 bg-white safe-top safe-bottom">
-      <div>
-        <div className="flex items-center -ml-2 mb-8">
-          <Link
-            href="/"
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-[#181A19] hover:bg-[#F0F1EE] active:scale-95 transition-colors"
-            aria-label="Back to landing"
+    <div className="relative flex min-h-dvh flex-col overflow-hidden bg-[#0C0C0E]">
+
+      {/* Full-page gradient background */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{
+          background: "linear-gradient(160deg, #5e5e5eff, #0C0C0E 100%)",
+        }}
+      />
+
+      {/* Radial bloom top-left */}
+      <div
+        className="absolute top-[-10%] left-[-10%] w-[70%] h-[70%] rounded-full opacity-30 z-0 pointer-events-none"
+        
+      />
+      {/* Radial bloom bottom-right */}
+      <div
+        className="absolute bottom-[5%] right-[-15%] w-[60%] h-[60%] rounded-full opacity-20 z-0 pointer-events-none"
+        style={{ background: "radial-gradient(circle, #190031ff 0%, transparent 70%)" }}
+      />
+
+      {/* Content */}
+      <div className="relative z-10 flex flex-1 flex-col justify-between px-6 pt-16 pb-8">
+
+        {/* ── Logo + Brand ── */}
+        <div className="flex flex-col items-center gap-5">
+          <div
+            className="flex h-[90px] w-[90px] items-center justify-center rounded-[26px] overflow-hidden shadow-2xl"
+            style={{
+              background: "rgba(255,255,255,0.12)",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              border: "1px solid rgba(255,255,255,0.20)",
+            }}
           >
-            <ArrowLeft className="h-5 w-5" strokeWidth={1.8} />
-          </Link>
-        </div>
-
-        <h1 className="text-xl font-bold tracking-tight text-[#181A19]">
-          Authenticate Account
-        </h1>
-        <p className="mt-1 text-xs text-[#6C716D]">
-          Enter your assigned identifier to initiate cryptographic challenge verification.
-        </p>
-
-        <form onSubmit={handleSendOTP} className="mt-7 space-y-4">
-          <div>
-            <label
-              htmlFor="loginUserNumber"
-              className="block text-xs font-medium text-[#181A19] mb-1.5"
-            >
-              Assigned User Number
-            </label>
-            <div className="relative flex items-center">
-              <span className="absolute left-3.5 text-sm font-semibold text-[#9B9E9C]">
-                #
-              </span>
-              <input
-                id="loginUserNumber"
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={userNumber}
-                onChange={(e) => {
-                  setUserNumber(e.target.value.replace(/\D/g, ""));
-                  if (error) setError("");
-                }}
-                placeholder="482910"
-                className="h-12 w-full rounded-xl bg-[#F0F1EE] pl-8 pr-4 font-mono text-base font-semibold tracking-wider text-[#181A19] placeholder-[#9B9E9C] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#1F5C4A] border border-transparent focus:border-[#1F5C4A] transition-all"
-              />
-            </div>
-            {error && <p className="mt-1.5 text-xs text-[#B94A48]">{error}</p>}
+            <Image
+              src="/images/ruvio-logo.png"
+              alt="Ruvio"
+              width={60}
+              height={60}
+              className="object-contain invert"
+              priority
+            />
           </div>
 
-          <PrimaryButton
-            type="submit"
-            size="lg"
-            isLoading={isLoading}
-            className="w-full text-sm font-semibold"
-            icon={<ArrowRight className="h-4 w-4" />}
-          >
-            Request One-Time Code
-          </PrimaryButton>
-        </form>
-      </div>
+          <div className="text-center">
+            <h1 className="text-[30px] font-medium text-white leading-tight tracking-tight">
+              Welcome to Ruvio
+            </h1>
+            <p className="mt-1.5 text-[14px] text-white/60 font-medium">
+              Sign in to continue to Ruvio
+            </p>
+          </div>
+        </div>
 
-      <div className="border-t border-[#E3E5E1] pt-4 flex items-center gap-2 text-xs text-[#6C716D]">
-        <ShieldCheck className="h-4 w-4 text-[#1F5C4A] flex-shrink-0" />
-        <span>End-to-end encrypted protocol authentication.</span>
+        {/* ── Glass form card ── */}
+        <div
+          className="w-full max-w-sm mx-auto rounded-3xl p-6 mt-10"
+          style={{
+            background: "rgba(255,255,255,0.09)",
+            backdropFilter: "blur(28px)",
+            WebkitBackdropFilter: "blur(28px)",
+            border: "1px solid rgba(255,255,255,0.14)",
+          }}
+        >
+          <form onSubmit={handleSendOTP} className="space-y-4">
+
+            {/* Label + Input */}
+            <div>
+              <label
+                htmlFor="loginUserNumber"
+                className="block text-[11px] font-semibold text-white/45 uppercase tracking-[0.12em] mb-2.5"
+              >
+                User Number
+              </label>
+
+              <div className="relative flex items-center">
+                <span className="absolute left-4 text-sm font-bold text-white/40 select-none">#</span>
+                <input
+                  id="loginUserNumber"
+                  type={showNumber ? "text" : "password"}
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={userNumber}
+                  onChange={(e) => {
+                    setUserNumber(e.target.value.replace(/\D/g, ""));
+                    if (error) setError("");
+                  }}
+                  placeholder="482910"
+                  className="h-[54px] w-full rounded-2xl pl-9 pr-12 font-mono text-[18px] font-semibold tracking-[0.25em] text-white placeholder-white/25 focus:outline-none transition-all"
+                  style={{
+                    background: "rgba(255,255,255,0.08)",
+                    border: error
+                      ? "1px solid rgba(239,68,68,0.6)"
+                      : "1px solid rgba(255,255,255,0.12)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNumber(!showNumber)}
+                  className="absolute right-4 text-white/40 hover:text-white/70 transition-colors cursor-pointer"
+                  aria-label="Toggle visibility"
+                >
+                  {showNumber
+                    ? <EyeOff className="h-4 w-4" strokeWidth={1.8} />
+                    : <Eye className="h-4 w-4" strokeWidth={1.8} />
+                  }
+                </button>
+              </div>
+
+              {error && (
+                <p className="mt-2 text-[12px] text-red-400/90 font-medium flex items-center gap-1.5">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                  {error}
+                </p>
+              )}
+            </div>
+
+            {/* Submit button */}
+            <button
+              id="loginSubmitBtn"
+              type="submit"
+              disabled={isLoading}
+              className="w-full h-[54px] rounded-2xl font-semibold text-[15px] text-white flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+              style={{
+                background: isLoading
+                  ? "rgba(255,255,255,0.15)"
+                  : "linear-gradient(135deg, #00413dff 0%, #162823ff 100%)",
+                boxShadow: "0 4px 28px rgba(107, 124, 184, 0.09)",
+              }}
+            >
+              {isLoading ? (
+                <span className="flex items-center gap-2">
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Sending code...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  Send One-Time Code
+                  <ArrowRight className="h-4 w-4" strokeWidth={2} />
+                </span>
+              )}
+            </button>
+          </form>
+        </div>
+
+        {/* ── Bottom security badge ── */}
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <ShieldCheck className="h-4 w-4 text-white/35 flex-shrink-0" strokeWidth={1.8} />
+          <span className="text-[12px] text-white/35 font-medium">
+            End-to-end encrypted · Zero metadata
+          </span>
+        </div>
+
       </div>
     </div>
   );
