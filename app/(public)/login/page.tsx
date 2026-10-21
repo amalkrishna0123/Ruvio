@@ -36,7 +36,7 @@ export default function LoginPage() {
       <div
         className="absolute inset-0 z-0"
         style={{
-          background: "linear-gradient(160deg, #5e5e5eff, #0C0C0E 100%)",
+          background: "linear-gradient(160deg, #d400ffff, #280030ff 100%)",
         }}
       />
 
@@ -89,7 +89,7 @@ export default function LoginPage() {
         <div
           className="w-full max-w-sm mx-auto rounded-3xl p-6 mt-10"
           style={{
-            background: "rgba(255,255,255,0.09)",
+            background: "rgba(255, 255, 255, 1)",
             backdropFilter: "blur(28px)",
             WebkitBackdropFilter: "blur(28px)",
             border: "1px solid rgba(255,255,255,0.14)",
@@ -101,13 +101,13 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="loginUserNumber"
-                className="block text-[11px] font-semibold text-white/45 uppercase tracking-[0.12em] mb-2.5"
+                className="block text-[11px] font-semibold text-black uppercase tracking-[0.12em] mb-2.5"
               >
                 User Number
               </label>
 
               <div className="relative flex items-center">
-                <span className="absolute left-4 text-sm font-bold text-white/40 select-none">#</span>
+                <span className="absolute left-4 text-sm font-bold text-black/40 select-none">#</span>
                 <input
                   id="loginUserNumber"
                   type={showNumber ? "text" : "password"}
@@ -119,18 +119,18 @@ export default function LoginPage() {
                     if (error) setError("");
                   }}
                   placeholder="482910"
-                  className="h-[54px] w-full rounded-2xl pl-9 pr-12 font-mono text-[18px] font-semibold tracking-[0.25em] text-white placeholder-white/25 focus:outline-none transition-all"
+                  className="h-[54px] w-full rounded-2xl pl-9 pr-12 font-mono text-[18px] font-semibold tracking-[0.25em] text-black placeholder-black/25 focus:outline-none transition-all"
                   style={{
-                    background: "rgba(255,255,255,0.08)",
+                    background: "",
                     border: error
                       ? "1px solid rgba(239,68,68,0.6)"
-                      : "1px solid rgba(255,255,255,0.12)",
+                      : "1px solid rgba(184, 184, 184, 0.75)",
                   }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowNumber(!showNumber)}
-                  className="absolute right-4 text-white/40 hover:text-white/70 transition-colors cursor-pointer"
+                  className="absolute right-4 text-black/40 hover:text-black/70 transition-colors cursor-pointer"
                   aria-label="Toggle visibility"
                 >
                   {showNumber
@@ -156,8 +156,8 @@ export default function LoginPage() {
               className="w-full h-[54px] rounded-2xl font-semibold text-[15px] text-white flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 cursor-pointer"
               style={{
                 background: isLoading
-                  ? "rgba(255,255,255,0.15)"
-                  : "linear-gradient(135deg, #00413dff 0%, #162823ff 100%)",
+                  ? "rgba(0, 0, 0, 1)"
+                  : "linear-gradient(135deg, #000000ff 0%, #000000ff 100%)",
                 boxShadow: "0 4px 28px rgba(107, 124, 184, 0.09)",
               }}
             >
