@@ -1,0 +1,246 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;0,14..32,900&family=Outfit:wght@400;500;600;700;800;900&display=swap");
+@import "tailwindcss";
+
+@layer base {
+
+  :root {
+    --app-max-width: 430px;
+
+    --color-primary: #1F5C4A;
+    --color-primary-dark: #164638;
+    --color-primary-light: #E8F2EE;
+    --color-primary-hover: #1a5040;
+
+    --color-bg: #F5F5F2;
+    --color-surface: #FFFFFF;
+    --color-surface-secondary: #F0F1EE;
+    --color-surface-elevated: #FFFFFF;
+
+    /* Text */
+    --color-text-primary: #181A19;
+    --color-text-secondary: #6C716D;
+    --color-text-tertiary: #9B9E9C;
+    --color-text-inverse: #FFFFFF;
+
+    /* Borders */
+    --color-border: #E3E5E1;
+    --color-border-focus: #1F5C4A;
+
+    /* States */
+    --color-success: #2F7D5B;
+    --color-warning: #B9822B;
+    --color-danger: #B94A48;
+    --color-danger-light: #FBEAEA;
+
+    /* Messages */
+    --color-bubble-out: #1F5C4A;
+    --color-bubble-in: #F0F1EE;
+    --color-bubble-out-text: #FFFFFF;
+    --color-bubble-in-text: #181A19;
+
+    /* Spacing rhythm */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+
+    /* Radius */
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --radius-full: 9999px;
+
+    /* Animation */
+    --duration-fast: 120ms;
+    --duration-normal: 200ms;
+    --duration-slow: 300ms;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ─── Reset & base ─────────────────────────────────────────────────────── */
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+    height: 100%;
+  }
+
+  body {
+    font-family: "Inter", "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #0C0C0E;
+    color: var(--color-text-primary);
+    line-height: 1.5;
+    height: 100%;
+    overscroll-behavior: none;
+  }
+
+  /* ─── Safe areas ───────────────────────────────────────────────────────── */
+
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* ─── Focus visible ───────────────────────────────────────────────────── */
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ─── Reduced motion ──────────────────────────────────────────────────── */
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* ─── Scrollbars ───────────────────────────────────────────────────────── */
+
+  ::-webkit-scrollbar {
+    width: 0;
+    background: transparent;
+  }
+}
+
+/* ─── Utility classes ────────────────────────────────────────────────────── */
+
+@layer utilities {
+  .app-shell {
+    width: 100%;
+    max-width: var(--app-max-width);
+    min-height: 100dvh;
+    margin: 0 auto;
+    background: var(--color-surface);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Desktop shadow */
+  @media (min-width: 500px) {
+    .app-shell {
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.06),
+        0 4px 32px rgba(0, 0, 0, 0.08);
+    }
+  }
+
+  .text-primary {
+    color: var(--color-text-primary);
+  }
+
+  .text-secondary {
+    color: var(--color-text-secondary);
+  }
+
+  .text-tertiary {
+    color: var(--color-text-tertiary);
+  }
+
+  .bg-surface {
+    background-color: var(--color-surface);
+  }
+
+  .bg-surface-secondary {
+    background-color: var(--color-surface-secondary);
+  }
+
+  .border-default {
+    border-color: var(--color-border);
+  }
+
+  /* Scrollbar hiding utility */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes slide-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(31, 92, 74, 0.4);
+  }
+
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(31, 92, 74, 0);
+  }
+
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(31, 92, 74, 0);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up var(--duration-normal) var(--ease-out) both;
+}
+
+.animate-fade-in {
+  animation: fade-in var(--duration-normal) ease both;
+}
