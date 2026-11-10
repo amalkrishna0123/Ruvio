@@ -11,6 +11,12 @@ export interface User {
   role?: "owner" | "admin" | "member";
   bio?: string;
   joinedDate?: string;
+  /** Persisted user settings stored in Firestore */
+  settings?: {
+    readReceipts?: boolean;
+    notifications?: boolean;
+    ephemeralTimer?: string;
+  };
 }
 
 export interface Message {

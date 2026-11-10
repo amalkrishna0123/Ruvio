@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, UserPlus, CheckCircle2 } from "lucide-react";
 import { PrimaryButton } from "@/components/common";
+import { collection, addDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 
 export default function AdminCreateUserPage() {
   const router = useRouter();
@@ -17,7 +19,7 @@ export default function AdminCreateUserPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) {
       setError("Please complete user name and email fields.");
@@ -25,10 +27,25 @@ export default function AdminCreateUserPage() {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    setError("");
+
+    try {
+      const userRef = doc(collection(db, "users"));
+      await setDoc(userRef, {
+        id: userRef.id,
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        userNumber: autoNumber,
+        status,
+        joinedDate: "Nov 2026",
+        role: "member",
+        createdAt: serverTimestamp(),
+      });
       router.push("/admin/users");
-    }, 450);
+    } catch (err: any) {
+      setIsLoading(false);
+      setError(err?.message || "Failed to create user account.");
+    }
   };
 
   return (

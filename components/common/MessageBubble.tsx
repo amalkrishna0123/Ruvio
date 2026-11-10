@@ -191,8 +191,18 @@ export default function MessageBubble({
         >
           <span>{message.timestamp}</span>
           {isOutgoing && (
-            <span className="text-[11px] font-medium text-[#9B9E9C]">
-              {message.status === "read" ? "Read" : "Delivered"}
+            <span className="flex items-center gap-1 text-[11px] font-medium">
+              {message.status === "read" ? (
+                <>
+                  <CheckCheck className="w-3.5 h-3.5 text-blue-400" strokeWidth={2.2} />
+                  <span className="text-blue-400">Read</span>
+                </>
+              ) : (
+                <>
+                  <CheckCheck className="w-3.5 h-3.5 text-[#9B9E9C]" strokeWidth={2} />
+                  <span className="text-[#9B9E9C]">Delivered</span>
+                </>
+              )}
             </span>
           )}
         </div>

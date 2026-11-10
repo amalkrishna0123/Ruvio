@@ -1,16 +1,52 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { UserPlus, Search, MoreHorizontal, ShieldCheck, Filter } from "lucide-react";
-import { sampleUsers } from "@/lib/mock-data";
+import { UserPlus, Search } from "lucide-react";
+import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { User } from "@/types";
 import { Avatar } from "@/components/common";
 
 export default function AdminUsersPage() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const filtered = sampleUsers.filter((u) => {
+  useEffect(() => {
+    const q = query(collection(db, "users"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const list: User[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          list.push({
+            id: d.id,
+            name: data.name || "User",
+            userNumber: data.userNumber || "",
+            email: data.email || "",
+            avatarUrl: data.avatarUrl,
+            status: data.status || "offline",
+            joinedDate: data.joinedDate || "2026",
+            bio: data.bio,
+            role: data.role || "member",
+          });
+        });
+        setUsers(list);
+        setIsLoading(false);
+      },
+      (err) => {
+        console.warn("Admin users error:", err);
+        setIsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const filtered = users.filter((u) => {
     const matches =
       u.name.toLowerCase().includes(search.toLowerCase()) ||
       u.userNumber.includes(search) ||
@@ -82,58 +118,72 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E3E5E1]/60 text-xs">
-              {filtered.map((user) => (
-                <tr key={user.id} className="hover:bg-[#FAFAF8] transition-colors">
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={user.name} size="sm" />
-                      <div>
-                        <div className="font-semibold text-[#181A19]">
-                          {user.name}
-                        </div>
-                        <div className="text-[11px] text-[#6C716D]">
-                          {user.email}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 font-mono font-semibold text-[#1F5C4A]">
-                    #{user.userNumber}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-[#F0F1EE] px-2 py-0.5 text-[11px] font-medium text-[#181A19] capitalize">
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          user.status === "online"
-                            ? "bg-[#2F7D5B]"
-                            : user.status === "away"
-                            ? "bg-[#B9822B]"
-                            : "bg-[#9B9E9C]"
-                        }`}
-                      />
-                      {user.status}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-[#6C716D]">
-                    {user.joinedDate || "Jan 2024"}
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    <Link
-                      href={`/admin/users/${user.id}`}
-                      className="inline-flex rounded-lg border border-[#E3E5E1] px-2.5 py-1 text-xs font-semibold text-[#181A19] hover:bg-[#F0F1EE]"
-                    >
-                      Inspect Profile
-                    </Link>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-[#6C716D]">
+                    Loading user accounts...
                   </td>
                 </tr>
-              ))}
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-[#6C716D]">
+                    No users matching criteria.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((user) => (
+                  <tr key={user.id} className="hover:bg-[#FAFAF8] transition-colors">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={user.name} size="sm" />
+                        <div>
+                          <div className="font-semibold text-[#181A19]">
+                            {user.name}
+                          </div>
+                          <div className="text-[11px] text-[#6C716D]">
+                            {user.email}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 font-mono font-semibold text-[#1F5C4A]">
+                      #{user.userNumber}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-[#F0F1EE] px-2 py-0.5 text-[11px] font-medium text-[#181A19] capitalize">
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            user.status === "online"
+                              ? "bg-[#2F7D5B]"
+                              : user.status === "away"
+                              ? "bg-[#B9822B]"
+                              : "bg-[#9B9E9C]"
+                          }`}
+                        />
+                        {user.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-[#6C716D]">
+                      {user.joinedDate || "Jan 2026"}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Link
+                        href={`/admin/users/${user.id}`}
+                        className="inline-flex rounded-lg border border-[#E3E5E1] px-2.5 py-1 text-xs font-semibold text-[#181A19] hover:bg-[#F0F1EE]"
+                      >
+                        Inspect Profile
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
 
         {/* Table footer / Pagination */}
         <div className="flex items-center justify-between border-t border-[#E3E5E1] p-3 text-xs text-[#6C716D]">
-          <span>Showing {filtered.length} of {sampleUsers.length} users</span>
+          <span>Showing {filtered.length} of {users.length} users</span>
           <div className="flex gap-1">
             <button
               disabled

@@ -1,19 +1,54 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { FolderGit2, Search, Plus, ExternalLink } from "lucide-react";
-import { sampleProjects } from "@/lib/mock-data";
+import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { Project } from "@/types";
 
 export default function AdminProjectsPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const filtered = sampleProjects.filter((p) => {
+  useEffect(() => {
+    const q = query(collection(db, "projects"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const list: Project[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          list.push({
+            id: d.id,
+            name: data.name || "Workspace",
+            description: data.description || "",
+            status: data.status || "active",
+            owner: data.owner || { id: "", name: "Owner", userNumber: "", email: "", status: "online" },
+            memberCount: data.members?.length || 1,
+            members: data.members || [],
+            lastActivity: data.lastActivity || "Recently",
+          });
+        });
+        setProjects(list);
+        setIsLoading(false);
+      },
+      (err) => {
+        console.warn("Admin projects error:", err);
+        setIsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const filtered = projects.filter((p) => {
     const matches =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.description.toLowerCase().includes(search.toLowerCase()) ||
-      p.owner.name.toLowerCase().includes(search.toLowerCase());
+      p.owner?.name?.toLowerCase().includes(search.toLowerCase());
     if (!matches) return false;
     if (statusFilter !== "all" && p.status !== statusFilter) return false;
     return true;
@@ -80,40 +115,54 @@ export default function AdminProjectsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E3E5E1]/60 text-xs">
-              {filtered.map((proj) => (
-                <tr key={proj.id} className="hover:bg-[#FAFAF8] transition-colors">
-                  <td className="py-3 px-4">
-                    <div>
-                      <div className="font-semibold text-[#181A19]">
-                        {proj.name}
-                      </div>
-                      <div className="text-[11px] text-[#6C716D] max-w-xs truncate">
-                        {proj.description}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-[#181A19] font-medium">
-                    {proj.owner.name}
-                  </td>
-                  <td className="py-3 px-4 text-[#6C716D]">
-                    {proj.memberCount} members
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="rounded bg-[#E8F2EE] px-2 py-0.5 text-[10px] font-semibold text-[#1F5C4A] uppercase">
-                      {proj.status}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    <Link
-                      href={`/projects/${proj.id}`}
-                      className="inline-flex items-center gap-1 rounded-lg border border-[#E3E5E1] px-2.5 py-1 text-xs font-semibold text-[#181A19] hover:bg-[#F0F1EE]"
-                    >
-                      <span>Open</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </Link>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-[#6C716D]">
+                    Loading workspaces...
                   </td>
                 </tr>
-              ))}
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-[#6C716D]">
+                    No workspaces found.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((proj) => (
+                  <tr key={proj.id} className="hover:bg-[#FAFAF8] transition-colors">
+                    <td className="py-3 px-4">
+                      <div>
+                        <div className="font-semibold text-[#181A19]">
+                          {proj.name}
+                        </div>
+                        <div className="text-[11px] text-[#6C716D] max-w-xs truncate">
+                          {proj.description}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-[#181A19] font-medium">
+                      {proj.owner?.name || "Owner"}
+                    </td>
+                    <td className="py-3 px-4 text-[#6C716D]">
+                      {proj.memberCount} members
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="rounded bg-[#E8F2EE] px-2 py-0.5 text-[10px] font-semibold text-[#1F5C4A] uppercase">
+                        {proj.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Link
+                        href={`/projects/${proj.id}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-[#E3E5E1] px-2.5 py-1 text-xs font-semibold text-[#181A19] hover:bg-[#F0F1EE]"
+                      >
+                        <span>Open</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

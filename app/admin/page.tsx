@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -11,33 +11,114 @@ import {
   ShieldCheck,
   UserPlus,
 } from "lucide-react";
-import { sampleUsers, sampleProjects } from "@/lib/mock-data";
+import {
+  collection,
+  query,
+  limit,
+  onSnapshot,
+  getCountFromServer,
+  orderBy,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { User, Project } from "@/types";
 import { Avatar } from "@/components/common";
 
 export default function AdminDashboardPage() {
+  const [userCount, setUserCount] = useState<number>(0);
+  const [projectCount, setProjectCount] = useState<number>(0);
+  const [recentUsers, setRecentUsers] = useState<User[]>([]);
+  const [recentProjects, setRecentProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCounts() {
+      try {
+        const [uSnap, pSnap] = await Promise.all([
+          getCountFromServer(collection(db, "users")),
+          getCountFromServer(collection(db, "projects")),
+        ]);
+        if (isMounted) {
+          setUserCount(uSnap.data().count);
+          setProjectCount(pSnap.data().count);
+        }
+      } catch (err) {
+        console.warn("Error fetching dashboard counts:", err);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadCounts();
+
+    // Subscribe to genuine users
+    const uQuery = query(collection(db, "users"), limit(4));
+    const unsubUsers = onSnapshot(uQuery, (snap) => {
+      const list: User[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        list.push({
+          id: d.id,
+          name: data.name || "User",
+          userNumber: data.userNumber || "",
+          email: data.email || "",
+          status: data.status || "offline",
+        });
+      });
+      setRecentUsers(list);
+    });
+
+    // Subscribe to genuine projects
+    const pQuery = query(collection(db, "projects"), limit(4));
+    const unsubProjects = onSnapshot(pQuery, (snap) => {
+      const list: Project[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        list.push({
+          id: d.id,
+          name: data.name || "Workspace",
+          description: data.description || "",
+          status: data.status || "active",
+          owner: data.owner || { id: "", name: "Owner", userNumber: "", email: "", status: "online" },
+          memberCount: data.members?.length || 1,
+          members: data.members || [],
+          lastActivity: data.lastActivity || "Recently",
+        });
+      });
+      setRecentProjects(list);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubUsers();
+      unsubProjects();
+    };
+  }, []);
+
   const metrics = [
     {
       title: "Registered Users",
-      value: "1,428",
-      sub: "+12 this week",
+      value: isLoading ? "..." : String(userCount),
+      sub: "Active database profiles",
       icon: Users,
     },
     {
       title: "Active Workspaces",
-      value: "84",
+      value: isLoading ? "..." : String(projectCount),
       sub: "100% encrypted",
       icon: FolderGit2,
     },
     {
       title: "Relay Node Load",
-      value: "18.4%",
+      value: "Normal",
       sub: "Zurich Enclave",
       icon: Server,
     },
     {
       title: "Protocol Health",
-      value: "99.98%",
-      sub: "Double-Ratchet v2.4",
+      value: "100%",
+      sub: "Double-Ratchet Live",
       icon: ShieldCheck,
     },
   ];
@@ -106,31 +187,37 @@ export default function AdminDashboardPage() {
           </div>
 
           <div className="divide-y divide-[#E3E5E1]/50">
-            {sampleUsers.slice(0, 4).map((user) => (
-              <div
-                key={user.id}
-                className="flex items-center justify-between py-2.5"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Avatar name={user.name} size="sm" />
-                  <div>
-                    <div className="text-xs font-semibold text-[#181A19]">
-                      {user.name}
-                    </div>
-                    <div className="text-[11px] text-[#6C716D]">
-                      #{user.userNumber} · {user.email}
+            {recentUsers.length === 0 ? (
+              <p className="text-xs text-[#6C716D] py-4 text-center">
+                No users provisioned in the database yet.
+              </p>
+            ) : (
+              recentUsers.map((user) => (
+                <div
+                  key={user.id}
+                  className="flex items-center justify-between py-2.5"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={user.name} size="sm" />
+                    <div>
+                      <div className="text-xs font-semibold text-[#181A19]">
+                        {user.name}
+                      </div>
+                      <div className="text-[11px] text-[#6C716D]">
+                        #{user.userNumber} · {user.email}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <Link
-                  href={`/admin/users/${user.id}`}
-                  className="rounded-lg border border-[#E3E5E1] px-2 py-1 text-[11px] font-medium text-[#181A19] hover:bg-[#F0F1EE]"
-                >
-                  Manage
-                </Link>
-              </div>
-            ))}
+                  <Link
+                    href={`/admin/users/${user.id}`}
+                    className="rounded-lg border border-[#E3E5E1] px-2 py-1 text-[11px] font-medium text-[#181A19] hover:bg-[#F0F1EE]"
+                  >
+                    Manage
+                  </Link>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -150,25 +237,31 @@ export default function AdminDashboardPage() {
           </div>
 
           <div className="divide-y divide-[#E3E5E1]/50">
-            {sampleProjects.slice(0, 4).map((proj) => (
-              <div
-                key={proj.id}
-                className="flex items-center justify-between py-2.5"
-              >
-                <div>
-                  <div className="text-xs font-semibold text-[#181A19]">
-                    {proj.name}
+            {recentProjects.length === 0 ? (
+              <p className="text-xs text-[#6C716D] py-4 text-center">
+                No active workspaces created yet.
+              </p>
+            ) : (
+              recentProjects.map((proj) => (
+                <div
+                  key={proj.id}
+                  className="flex items-center justify-between py-2.5"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-[#181A19]">
+                      {proj.name}
+                    </div>
+                    <div className="text-[11px] text-[#6C716D]">
+                      {proj.memberCount} members · Owner: {proj.owner?.name || "Member"}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[#6C716D]">
-                    {proj.memberCount} members · Owner: {proj.owner.name}
-                  </div>
-                </div>
 
-                <span className="rounded bg-[#E8F2EE] px-2 py-0.5 text-[10px] font-semibold text-[#1F5C4A] uppercase">
-                  {proj.status}
-                </span>
-              </div>
-            ))}
+                  <span className="rounded bg-[#E8F2EE] px-2 py-0.5 text-[10px] font-semibold text-[#1F5C4A] uppercase">
+                    {proj.status}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

@@ -13,9 +13,12 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { PrimaryButton, SecondaryButton } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
+import { createProjectRecord } from "@/lib/firebase/projects-service";
 
 export default function CreateProjectPage() {
   const router = useRouter();
+  const { userProfile } = useAuth();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<"active" | "planning" | "completed">("active");
@@ -26,20 +29,38 @@ export default function CreateProjectPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setError("Project name is required");
+      return;
+    }
+    if (!userProfile) {
+      setError("Authentication required to provision workspace");
       return;
     }
 
     setError("");
     setIsLoading(true);
 
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      await createProjectRecord(
+        {
+          name: name.trim(),
+          description: description.trim(),
+          status,
+          owner: userProfile,
+          members: [userProfile],
+          websiteUrl: websiteUrl.trim(),
+          repoUrl: repoUrl.trim(),
+        },
+        userProfile
+      );
       router.push("/projects");
-    }, 450);
+    } catch (err: any) {
+      setIsLoading(false);
+      setError(err?.message || "Failed to create project record.");
+    }
   };
 
   return (

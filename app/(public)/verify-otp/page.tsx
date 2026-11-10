@@ -3,23 +3,37 @@
 import React, { useState, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { ArrowLeft, CheckCircle2, AlertCircle, RefreshCw, KeyRound, Sparkles } from "lucide-react";
 import { PrimaryButton } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 function VerifyOtpContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const userNumber = searchParams.get("number") || "482910";
+  const userNumber = searchParams.get("number") || "";
+  const maskedEmail = searchParams.get("maskedEmail") || "";
+  const urlOtp = searchParams.get("otp") || "";
+  const { verifyOtpAndLogin, sendOtp } = useAuth();
 
   const [otp, setOtp] = useState<string[]>(["", "", "", "", "", ""]);
   const [timer, setTimer] = useState<number>(54);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
+  const [activeOtp, setActiveOtp] = useState<string>("");
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
     inputRefs.current[0]?.focus();
-  }, []);
+    const stored =
+      typeof window !== "undefined"
+        ? sessionStorage.getItem("ruvio_pending_otp_" + userNumber) ||
+          sessionStorage.getItem("ruvio_last_otp")
+        : "";
+    const resolved = urlOtp || stored || "";
+    if (resolved) {
+      setActiveOtp(resolved);
+    }
+  }, [urlOtp, userNumber]);
 
   useEffect(() => {
     if (timer > 0) {
@@ -61,7 +75,15 @@ function VerifyOtpContent() {
     inputRefs.current[nextIdx]?.focus();
   };
 
-  const handleVerify = (e: React.FormEvent) => {
+  const handleAutoFill = () => {
+    if (!activeOtp) return;
+    const digits = activeOtp.split("").slice(0, 6);
+    setOtp(digits);
+    setErrorStatus(null);
+    inputRefs.current[5]?.focus();
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = otp.join("");
     if (code.length < 6) {
@@ -69,23 +91,30 @@ function VerifyOtpContent() {
       return;
     }
 
-    // Interactive demo trigger: '000000' shows invalid state for testing
-    if (code === "000000") {
-      setErrorStatus("Verification code is invalid or has expired.");
-      return;
-    }
-
     setIsLoading(true);
-    setTimeout(() => {
+    setErrorStatus(null);
+    try {
+      await verifyOtpAndLogin(userNumber, code);
       router.push("/home");
-    }, 500);
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorStatus(err?.message || "Verification code is invalid or has expired.");
+    }
   };
 
-  const handleResend = () => {
+  const handleResend = async () => {
     setTimer(60);
     setOtp(["", "", "", "", "", ""]);
     setErrorStatus(null);
     inputRefs.current[0]?.focus();
+    try {
+      const res = await sendOtp(userNumber);
+      if (res.otpCode) {
+        setActiveOtp(res.otpCode);
+      }
+    } catch (err: any) {
+      setErrorStatus(err?.message || "Failed to resend verification code.");
+    }
   };
 
   return (
@@ -93,7 +122,7 @@ function VerifyOtpContent() {
       <div>
         <div className="flex items-center -ml-2 mb-6">
           <Link
-            href="/login"
+            href="/"
             className="flex h-10 w-10 items-center justify-center rounded-xl text-[#181A19] hover:bg-[#F0F1EE] active:scale-95 transition-colors"
             aria-label="Back to login"
           >
@@ -107,10 +136,36 @@ function VerifyOtpContent() {
         <p className="mt-1 text-xs text-[#6C716D] leading-relaxed">
           Sent to registered secure relay for user{" "}
           <span className="font-semibold text-[#181A19]">#{userNumber}</span>{" "}
-          (m***@s***.io)
+          {maskedEmail ? `(${maskedEmail})` : ""}
         </p>
 
-        <form onSubmit={handleVerify} className="mt-8">
+        {/* ── Active Verification Code Card (Ensures OTP is clearly shared) ── */}
+        {activeOtp && (
+          <div className="mt-5 flex items-center justify-between rounded-2xl bg-[#E8F2EE] border border-[#1F5C4A]/30 p-4 shadow-2xs">
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#1F5C4A]">
+                <KeyRound className="h-3.5 w-3.5" />
+                Security Verification Code
+              </div>
+              <div className="font-mono text-2xl font-bold tracking-[0.25em] text-[#1F5C4A]">
+                {activeOtp}
+              </div>
+              <div className="text-[11px] text-[#55786D]">
+                Assigned to your registered session
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleAutoFill}
+              className="flex items-center gap-1.5 rounded-xl bg-[#1F5C4A] px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#18493a] active:scale-95 transition-all cursor-pointer"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Auto-fill
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleVerify} className="mt-7">
           {/* 6 OTP Inputs */}
           <div className="flex justify-between gap-2">
             {otp.map((digit, idx) => (
@@ -142,7 +197,9 @@ function VerifyOtpContent() {
             </div>
           ) : (
             <p className="mt-3 text-[11px] text-[#9B9E9C]">
-              Tip: Paste or enter any 6 digits (e.g. 123456) to proceed.
+              {activeOtp
+                ? `Tip: Enter code ${activeOtp} or click Auto-fill above.`
+                : "Tip: Enter the 6-digit code shared for your user identifier (or 123456 for testing)."}
             </p>
           )}
 
@@ -171,7 +228,7 @@ function VerifyOtpContent() {
             <button
               type="button"
               onClick={handleResend}
-              className="inline-flex items-center gap-1.5 font-medium text-[#1F5C4A] hover:underline"
+              className="inline-flex items-center gap-1.5 font-medium text-[#1F5C4A] hover:underline cursor-pointer"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Resend verification code

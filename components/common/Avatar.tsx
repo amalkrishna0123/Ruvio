@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { UserStatus } from "@/types";
 
 interface AvatarProps {
@@ -20,6 +20,13 @@ export default function Avatar({
   className = "",
   darkBorder = false,
 }: AvatarProps) {
+  const [imgError, setImgError] = useState(false);
+
+  // Reset error flag whenever the URL changes (e.g. user uploads a new photo)
+  useEffect(() => {
+    setImgError(false);
+  }, [avatarUrl]);
+
   const getInitials = (n: string) => {
     const parts = n.trim().split(" ");
     if (parts.length >= 2) {
@@ -27,6 +34,9 @@ export default function Avatar({
     }
     return n.slice(0, 2).toUpperCase() || "WA";
   };
+
+  // Show initials if no URL provided or if the image failed to load
+  const resolvedUrl = imgError ? undefined : avatarUrl;
 
   const sizeClasses = {
     xs: "w-7 h-7 text-[10px]",
@@ -59,24 +69,23 @@ export default function Avatar({
         className={`${sizeClasses[size]} rounded-full bg-neutral-200 text-neutral-800 font-semibold flex items-center justify-center select-none overflow-hidden ring-1 ring-black/5 shadow-2xs`}
         title={userNumber ? `${name} (#${userNumber})` : name}
       >
-        {avatarUrl ? (
+        {resolvedUrl ? (
           <img
-            src={avatarUrl}
+            src={resolvedUrl}
             alt={name}
             className="w-full h-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLElement).style.display = "none";
-            }}
+            crossOrigin="anonymous"
+            onError={() => setImgError(true)}
           />
         ) : (
           <span className="opacity-80">{getInitials(name)}</span>
         )}
       </div>
 
-      {status && (
+      {status === "online" && (
         <span
-          className={`absolute rounded-full ${borderColor} ${statusSize[size]} ${statusColors[status]}`}
-          aria-label={`Status: ${status}`}
+          className={`absolute rounded-full ${borderColor} ${statusSize[size]} bg-[#22C55E]`}
+          aria-label="Status: online"
         />
       )}
     </div>

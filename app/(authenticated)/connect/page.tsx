@@ -4,22 +4,31 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Search, UserCheck, CheckCircle2, AlertCircle, MessageSquare } from "lucide-react";
-import { sampleUsers } from "@/lib/mock-data";
 import { User } from "@/types";
 import { Avatar, PrimaryButton, SecondaryButton } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
+import { searchGenuineUser, addGenuineConnection } from "@/lib/firebase/connections-service";
 
 export default function ConnectUserPage() {
   const router = useRouter();
+  const { userProfile } = useAuth();
   const [userNumber, setUserNumber] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [foundUser, setFoundUser] = useState<User | null>(null);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [activeConvId, setActiveConvId] = useState<string>("");
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userNumber.trim() || userNumber.length !== 6) {
       setErrorStatus("Please enter a valid 6-digit User Number");
+      setFoundUser(null);
+      return;
+    }
+
+    if (userProfile && userProfile.userNumber === userNumber) {
+      setErrorStatus("You cannot connect with your own User Number.");
       setFoundUser(null);
       return;
     }
@@ -28,20 +37,31 @@ export default function ConnectUserPage() {
     setIsSuccess(false);
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
+      const match = await searchGenuineUser(userNumber);
       setIsLoading(false);
-      const match = sampleUsers.find((u) => u.userNumber === userNumber);
       if (match) {
         setFoundUser(match);
       } else {
         setFoundUser(null);
         setErrorStatus(`No user found with identifier #${userNumber}. Verify the number with the recipient.`);
       }
-    }, 400);
+    } catch (err: any) {
+      setIsLoading(false);
+      setFoundUser(null);
+      setErrorStatus(err?.message || "Search failed. Please try again.");
+    }
   };
 
-  const handleConnect = () => {
-    setIsSuccess(true);
+  const handleConnect = async () => {
+    if (!userProfile || !foundUser) return;
+    try {
+      const convId = await addGenuineConnection(userProfile, foundUser);
+      setActiveConvId(convId);
+      setIsSuccess(true);
+    } catch (err: any) {
+      setErrorStatus(err?.message || "Failed to establish connection.");
+    }
   };
 
   return (
@@ -99,12 +119,9 @@ export default function ConnectUserPage() {
                   setFoundUser(null);
                   setIsSuccess(false);
                 }}
-                placeholder="731940"
+                placeholder="Enter 6-digit ID"
                 className="h-12 w-full rounded-xl bg-[#F0F1EE] pl-8 pr-4 font-mono text-base font-semibold tracking-wider text-[#181A19] placeholder-[#9B9E9C] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#1F5C4A] border border-transparent focus:border-[#1F5C4A]"
               />
-            </div>
-            <div className="mt-1 flex items-center justify-between text-[11px] text-[#9B9E9C]">
-              <span>Try test numbers: 731940, 518392, 904218</span>
             </div>
           </div>
 
@@ -133,6 +150,7 @@ export default function ConnectUserPage() {
               <Avatar
                 name={foundUser.name}
                 userNumber={foundUser.userNumber}
+                avatarUrl={foundUser.avatarUrl}
                 status={foundUser.status}
                 size="lg"
               />
@@ -145,8 +163,12 @@ export default function ConnectUserPage() {
                     #{foundUser.userNumber}
                   </span>
                 </div>
-                <p className="text-xs text-[#6C716D] mt-0.5 truncate">{foundUser.bio}</p>
-                <p className="text-[11px] text-[#9B9E9C]">Member since {foundUser.joinedDate}</p>
+                {foundUser.bio && (
+                  <p className="text-xs text-[#6C716D] mt-0.5 truncate">{foundUser.bio}</p>
+                )}
+                {foundUser.joinedDate && (
+                  <p className="text-[11px] text-[#9B9E9C]">Member since {foundUser.joinedDate}</p>
+                )}
               </div>
             </div>
 
@@ -157,7 +179,7 @@ export default function ConnectUserPage() {
                   <span>Connection established successfully!</span>
                 </div>
                 <PrimaryButton
-                  onClick={() => router.push(`/chat/conv_${foundUser.id.replace("usr_", "")}`)}
+                  onClick={() => router.push(`/chat/${activeConvId || foundUser.id}`)}
                   className="w-full text-xs"
                   icon={<MessageSquare className="w-3.5 h-3.5" />}
                 >

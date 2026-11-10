@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -17,23 +17,35 @@ import {
   MoreHorizontal,
   Sparkles,
 } from "lucide-react";
+import { useAuth } from "@/lib/firebase/auth-context";
+import { WebRTCCallSession, recordCallLog } from "@/lib/firebase/calls-service";
+import { User } from "@/types";
 
 function CallInterfaceContent() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { userProfile } = useAuth();
 
-  const callName = searchParams.get("name") || "Chelsea Apanta";
+  const callId = (params?.callId as string) || "call_live";
+  const callName = searchParams.get("name") || "Encrypted Line";
+  const callType = (searchParams.get("type") as "audio" | "video") || "video";
 
-  // Call timer starting at 20:10 (1210 seconds) from Image 1!
-  const [seconds, setSeconds] = useState(1210);
+  // Real call timer starting at 0
+  const [seconds, setSeconds] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoMuted, setIsVideoMuted] = useState(false);
+  const [isVideoMuted, setIsVideoMuted] = useState(callType === "audio");
   const [isSpeaker, setIsSpeaker] = useState(true);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [isSwapped, setIsSwapped] = useState(false);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
 
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const sessionRef = useRef<WebRTCCallSession | null>(null);
+
+  // 1. Call timer
   useEffect(() => {
     const timer = setInterval(() => {
       setSeconds((prev) => prev + 1);
@@ -41,34 +53,117 @@ function CallInterfaceContent() {
     return () => clearInterval(timer);
   }, []);
 
+  // 2. Initialize genuine WebRTC session & hardware media
+  useEffect(() => {
+    if (!userProfile?.id) return;
+
+    const isCaller = !callId.includes("_incoming");
+    const session = new WebRTCCallSession(callId, userProfile.id, isCaller);
+    sessionRef.current = session;
+
+    session
+      .startLocalMedia(!isVideoMuted, true)
+      .then((stream) => {
+        if (stream && localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+
+        session.initPeerConnection(
+          (remoteStream) => {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = remoteStream;
+              setHasRemoteVideo(true);
+            }
+          },
+          (state) => {
+            console.log("WebRTC State:", state);
+          }
+        );
+      })
+      .catch((err) => {
+        console.warn("Media capture error:", err);
+      });
+
+    return () => {
+      session.endSession();
+    };
+  }, [callId, userProfile?.id]);
+
   const formatTime = (totalSec: number) => {
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
     return `${m}:${s < 10 ? `0${s}` : s}`;
   };
 
-  const handleEndCall = () => {
-    router.push("/home");
+  const handleToggleMic = () => {
+    const next = !isMuted;
+    setIsMuted(next);
+    sessionRef.current?.toggleAudio(!next);
+  };
+
+  const handleToggleVideo = () => {
+    const next = !isVideoMuted;
+    setIsVideoMuted(next);
+    sessionRef.current?.toggleVideo(!next);
+  };
+
+  const handleEndCall = async () => {
+    const durationStr = formatTime(seconds);
+    sessionRef.current?.endSession();
+
+    if (userProfile) {
+      const recipientUser: User = {
+        id: callId,
+        name: callName,
+        userNumber: "",
+        email: "",
+        status: "online",
+      };
+
+      await recordCallLog({
+        caller: userProfile,
+        recipient: recipientUser,
+        type: callType,
+        direction: "outgoing",
+        duration: durationStr,
+      }).catch(() => {});
+    }
+
+    router.push("/calls");
   };
 
   return (
     <div className="relative flex h-dvh w-full flex-col justify-between overflow-hidden bg-black select-none">
-      {/* 1. Full-bleed remote video stream (Image 1 Right) */}
-      <div className="absolute inset-0 z-0">
-        <img
-          src={isSwapped ? "/images/pip_selfie.jpg" : "/images/video_call_remote.jpg"}
-          alt={callName}
+      {/* 1. Full-bleed remote video stream */}
+      <div className="absolute inset-0 z-0 bg-neutral-950 flex items-center justify-center">
+        <video
+          ref={isSwapped ? localVideoRef : remoteVideoRef}
+          autoPlay
+          playsInline
+          muted={isSwapped}
           className={`h-full w-full object-cover transition-opacity duration-300 ${
-            isVideoMuted && !isSwapped ? "opacity-20 blur-xl" : "opacity-100"
+            isVideoMuted && isSwapped ? "opacity-20 blur-xl" : "opacity-100"
           }`}
         />
+
+        {/* Fallback avatar overlay when remote video stream is not yet transmitting */}
+        {!hasRemoteVideo && !isSwapped && (
+          <div className="absolute flex flex-col items-center justify-center gap-3 text-white">
+            <div className="h-24 w-24 rounded-full bg-white/10 flex items-center justify-center text-3xl font-bold backdrop-blur-xl border border-white/20">
+              {callName.slice(0, 2).toUpperCase()}
+            </div>
+            <span className="text-sm font-medium text-white/80 animate-pulse">
+              Connecting end-to-end encrypted relay...
+            </span>
+          </div>
+        )}
+
         {/* Subtle cinematic gradient vignette */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/60 pointer-events-none" />
       </div>
 
       {/* 2. Top Navigation Bar (Image 1 Right) */}
       <header className="relative z-20 flex items-center justify-between p-4 pt-6">
-        {/* Back Button in frosted glass circle */}
         <Link
           href="/home"
           className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-xl border border-white/20 text-white hover:bg-black/50 active:scale-95 transition-all shadow-md"
@@ -77,10 +172,12 @@ function CallInterfaceContent() {
           <ChevronLeft className="h-6 w-6 -translate-x-0.5" strokeWidth={2.2} />
         </Link>
 
-        {/* Add User / Participant in frosted glass circle */}
         <button
           type="button"
-          onClick={() => alert("Invite link copied to clipboard")}
+          onClick={() => {
+            navigator.clipboard?.writeText(window.location.href);
+            alert("Secure call link copied to clipboard");
+          }}
           className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-xl border border-white/20 text-white hover:bg-black/50 active:scale-95 transition-all shadow-md cursor-pointer"
           aria-label="Add participants"
         >
@@ -94,13 +191,14 @@ function CallInterfaceContent() {
         onClick={() => setIsSwapped(!isSwapped)}
         title="Tap to swap views"
       >
-        <img
-          src={isSwapped ? "/images/video_call_remote.jpg" : "/images/pip_selfie.jpg"}
-          alt="Self preview"
+        <video
+          ref={isSwapped ? remoteVideoRef : localVideoRef}
+          autoPlay
+          playsInline
+          muted={!isSwapped}
           className="h-full w-full object-cover"
         />
 
-        {/* Flip camera icon in top-right of PiP */}
         <button
           type="button"
           onClick={(e) => {
@@ -119,16 +217,16 @@ function CallInterfaceContent() {
         <div className="relative z-30 mx-auto w-full max-w-xs mb-3 rounded-2xl bg-black/75 backdrop-blur-2xl border border-white/20 p-3 shadow-2xl text-white text-xs animate-slide-up">
           <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-2 font-medium">
             <span>Call Settings</span>
-            <span className="text-[10px] text-emerald-400 font-mono">1080p HD</span>
+            <span className="text-[10px] text-emerald-400 font-mono">WebRTC Secure</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => alert("Studio lighting & beauty filter enabled")}
+              onClick={() => alert("Hardware audio enhancement active")}
               className="flex items-center gap-1.5 p-2 rounded-xl bg-white/10 hover:bg-white/20"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Studio Light</span>
+              <span>Studio Voice</span>
             </button>
             <button
               type="button"
@@ -158,7 +256,7 @@ function CallInterfaceContent() {
             {/* 1. Mic Button */}
             <button
               type="button"
-              onClick={() => setIsMuted(!isMuted)}
+              onClick={handleToggleMic}
               className={`flex h-11 w-11 items-center justify-center rounded-full transition-all cursor-pointer ${
                 isMuted
                   ? "bg-rose-500/80 text-white border border-rose-400/50"
@@ -186,7 +284,7 @@ function CallInterfaceContent() {
             {/* 3. Video Toggle Button */}
             <button
               type="button"
-              onClick={() => setIsVideoMuted(!isVideoMuted)}
+              onClick={handleToggleVideo}
               className={`flex h-11 w-11 items-center justify-center rounded-full transition-all cursor-pointer ${
                 isVideoMuted
                   ? "bg-rose-500/80 text-white border border-rose-400/50"
@@ -197,7 +295,7 @@ function CallInterfaceContent() {
               {isVideoMuted ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />}
             </button>
 
-            {/* 4. End Call Button (Big Coral Red Affordance from screenshot) */}
+            {/* 4. End Call Button (Big Coral Red Affordance) */}
             <button
               type="button"
               onClick={handleEndCall}

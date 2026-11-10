@@ -4,29 +4,38 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ArrowRight, ShieldCheck, Eye, EyeOff, Lock } from "lucide-react";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 export default function LandingPage() {
   const router = useRouter();
+  const { sendOtp } = useAuth();
   const [userNumber, setUserNumber] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showNumber, setShowNumber] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userNumber.trim()) {
       setError("Please enter your 6-digit User Number");
       return;
     }
     if (userNumber.length !== 6 || !/^\d+$/.test(userNumber)) {
-      setError("User Number must be exactly 6 digits (e.g. 482910)");
+      setError("User Number must be exactly 6 digits");
       return;
     }
     setError("");
     setIsLoading(true);
-    setTimeout(() => {
-      router.push(`/verify-otp?number=${userNumber}`);
-    }, 400);
+
+    try {
+      const res = await sendOtp(userNumber);
+      const emailParam = res?.maskedEmail ? `&maskedEmail=${encodeURIComponent(res.maskedEmail)}` : "";
+      const otpParam = res?.otpCode ? `&otp=${encodeURIComponent(res.otpCode)}` : "";
+      router.push(`/verify-otp?number=${userNumber}${emailParam}${otpParam}`);
+    } catch (err: any) {
+      setIsLoading(false);
+      setError(err?.message || "Verification request failed. Please check your user number.");
+    }
   };
 
   return (
@@ -154,7 +163,7 @@ export default function LandingPage() {
               ) : (
                 <p className="mt-2 text-[11px] text-black flex items-center gap-1.5">
                   <Lock className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />
-                  Demo: 482910 · 731940 · 518392
+                  Enter your registered 6-digit identifier
                 </p>
               )}
             </div>

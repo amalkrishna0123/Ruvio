@@ -1,30 +1,104 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Shield,
-  Key,
   FolderGit2,
-  Users,
   Ban,
   RefreshCw,
-  Trash2,
 } from "lucide-react";
-import { sampleUsers, sampleProjects } from "@/lib/mock-data";
-import { Avatar, PrimaryButton, SecondaryButton } from "@/components/common";
+import { doc, getDoc, collection, query, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { User, Project } from "@/types";
+import { Avatar } from "@/components/common";
 
 export default function AdminUserDetailsPage() {
   const params = useParams();
   const router = useRouter();
-  const userId = (params?.userId as string) || "usr_elena";
+  const userId = (params?.userId as string) || "";
 
-  const user = sampleUsers.find((u) => u.id === userId) || sampleUsers[0];
-  const userProjects = sampleProjects.filter((p) =>
-    p.members.some((m) => m.id === user.id)
-  );
+  const [user, setUser] = useState<User | null>(null);
+  const [userProjects, setUserProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    let isMounted = true;
+    async function loadData() {
+      try {
+        const uSnap = await getDoc(doc(db, "users", userId));
+        if (uSnap.exists() && isMounted) {
+          const d = uSnap.data();
+          setUser({
+            id: uSnap.id,
+            name: d.name || "User",
+            userNumber: d.userNumber || "",
+            email: d.email || "",
+            avatarUrl: d.avatarUrl,
+            status: d.status || "offline",
+            joinedDate: d.joinedDate || "Nov 2026",
+            bio: d.bio,
+            role: d.role || "member",
+          });
+        }
+
+        // Fetch associated projects
+        const pSnap = await getDocs(collection(db, "projects"));
+        const matched: Project[] = [];
+        pSnap.forEach((docSnap) => {
+          const pd = docSnap.data();
+          const isMember = pd.members?.some((m: any) => m.id === userId);
+          if (isMember) {
+            matched.push({
+              id: docSnap.id,
+              name: pd.name || "Workspace",
+              description: pd.description || "",
+              status: pd.status || "active",
+              owner: pd.owner,
+              memberCount: pd.members?.length || 1,
+              members: pd.members || [],
+              lastActivity: pd.lastActivity || "Recently",
+            });
+          }
+        });
+
+        if (isMounted) {
+          setUserProjects(matched);
+        }
+      } catch (err) {
+        console.warn("Error loading user:", err);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
+
+  if (isLoading) {
+    return (
+      <div className="p-8 text-center text-xs text-[#6C716D]">
+        Loading user account records...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="p-8 text-center">
+        <p className="text-sm font-semibold text-[#181A19]">User record not found</p>
+        <Link href="/admin/users" className="mt-4 text-xs text-[#1F5C4A] font-semibold hover:underline">
+          Return to User Management
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -51,7 +125,7 @@ export default function AdminUserDetailsPage() {
       <div className="rounded-2xl border border-[#E3E5E1] bg-white p-6 shadow-2xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Avatar name={user.name} size="lg" status={user.status} />
+            <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" status={user.status} />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-[#181A19]">{user.name}</h2>
@@ -61,7 +135,7 @@ export default function AdminUserDetailsPage() {
               </div>
               <p className="text-xs text-[#6C716D] mt-0.5">{user.email}</p>
               <p className="text-[11px] text-[#9B9E9C] mt-0.5">
-                Member since {user.joinedDate || "Jan 2024"} · Role: Contributor
+                Member since {user.joinedDate || "Nov 2026"} · Role: {user.role || "member"}
               </p>
             </div>
           </div>
@@ -70,7 +144,7 @@ export default function AdminUserDetailsPage() {
             <button
               type="button"
               onClick={() => alert("Rotating session credentials")}
-              className="flex items-center gap-1.5 rounded-xl border border-[#E3E5E1] px-3 py-1.5 text-xs font-semibold text-[#181A19] hover:bg-[#F0F1EE]"
+              className="flex items-center gap-1.5 rounded-xl border border-[#E3E5E1] px-3 py-1.5 text-xs font-semibold text-[#181A19] hover:bg-[#F0F1EE] cursor-pointer"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               <span>Rotate Keys</span>
@@ -78,7 +152,7 @@ export default function AdminUserDetailsPage() {
             <button
               type="button"
               onClick={() => alert("Account suspended")}
-              className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-[#B94A48] hover:bg-[#FBEAEA]"
+              className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-[#B94A48] hover:bg-[#FBEAEA] cursor-pointer"
             >
               <Ban className="h-3.5 w-3.5" />
               <span>Suspend</span>
@@ -117,17 +191,23 @@ export default function AdminUserDetailsPage() {
         </h3>
 
         <div className="divide-y divide-[#E3E5E1]/50 text-xs">
-          {userProjects.map((p) => (
-            <div key={p.id} className="flex items-center justify-between py-2.5">
-              <div>
-                <span className="font-semibold text-[#181A19]">{p.name}</span>
-                <span className="block text-[11px] text-[#6C716D]">{p.description}</span>
+          {userProjects.length === 0 ? (
+            <p className="text-xs text-[#6C716D] py-2">
+              User is not currently assigned to any workspaces.
+            </p>
+          ) : (
+            userProjects.map((p) => (
+              <div key={p.id} className="flex items-center justify-between py-2.5">
+                <div>
+                  <span className="font-semibold text-[#181A19]">{p.name}</span>
+                  <span className="block text-[11px] text-[#6C716D]">{p.description}</span>
+                </div>
+                <span className="rounded bg-[#E8F2EE] px-2 py-0.5 text-[10px] font-semibold text-[#1F5C4A] uppercase">
+                  {p.status}
+                </span>
               </div>
-              <span className="rounded bg-[#E8F2EE] px-2 py-0.5 text-[10px] font-semibold text-[#1F5C4A] uppercase">
-                {p.status}
-              </span>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>

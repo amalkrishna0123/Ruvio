@@ -12,12 +12,13 @@ import {
   Compass,
   ExternalLink,
 } from "lucide-react";
-import { sampleUsers } from "@/lib/mock-data";
 import { Avatar, PrimaryButton, SecondaryButton } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 export default function LocationDetailsPage() {
   const params = useParams();
   const locationId = (params?.locationId as string) || "loc_node_zurich";
+  const { userProfile } = useAuth();
 
   return (
     <div className="flex h-dvh flex-col bg-white">
@@ -101,9 +102,9 @@ export default function LocationDetailsPage() {
         </div>
 
         <div className="flex items-center gap-3 border-t border-[#E3E5E1]/60 pt-3 text-xs text-[#6C716D]">
-          <Avatar name="Elena Rostova" size="sm" />
+          <Avatar name={userProfile?.name || "Member"} size="sm" />
           <div>
-            <span className="font-semibold text-[#181A19]">Shared by Elena Rostova</span>
+            <span className="font-semibold text-[#181A19]">Shared by {userProfile?.name || "Authenticated Node"}</span>
             <span className="block text-[11px] text-[#9B9E9C]">Expires in 42 minutes</span>
           </div>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -16,11 +16,63 @@ import {
   Check,
 } from "lucide-react";
 import { BottomNavigation } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 export default function SettingsPage() {
-  const [readReceipts, setReadReceipts] = useState(true);
-  const [ephemeralTimer, setEphemeralTimer] = useState("7 days");
-  const [notifications, setNotifications] = useState(true);
+  const { userProfile, updateProfile } = useAuth();
+
+  // Initialize from persisted Firestore settings when available
+  const [readReceipts, setReadReceipts] = useState<boolean>(
+    userProfile?.settings?.readReceipts ?? true
+  );
+  const [notifications, setNotifications] = useState<boolean>(
+    userProfile?.settings?.notifications ?? true
+  );
+  const [ephemeralTimer, setEphemeralTimer] = useState<string>(
+    userProfile?.settings?.ephemeralTimer || "7 days"
+  );
+
+  // Keep local state in sync when userProfile loads from Firestore
+  useEffect(() => {
+    if (userProfile?.settings) {
+      setReadReceipts(userProfile.settings.readReceipts ?? true);
+      setNotifications(userProfile.settings.notifications ?? true);
+      setEphemeralTimer(userProfile.settings.ephemeralTimer || "7 days");
+    }
+  }, [userProfile?.settings]);
+
+  /** Persist a settings field to Firestore and update local state. */
+  const persistSetting = async (
+    key: "readReceipts" | "notifications" | "ephemeralTimer",
+    value: boolean | string
+  ) => {
+    try {
+      await updateProfile({
+        settings: {
+          ...(userProfile?.settings || {}),
+          [key]: value,
+        },
+      } as any);
+    } catch (err) {
+      console.warn("Failed to persist setting:", err);
+    }
+  };
+
+  const handleReadReceipts = () => {
+    const next = !readReceipts;
+    setReadReceipts(next);
+    persistSetting("readReceipts", next);
+  };
+
+  const handleNotifications = () => {
+    const next = !notifications;
+    setNotifications(next);
+    // Request browser notification permission when enabling
+    if (next && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+    persistSetting("notifications", next);
+  };
 
   const sections = [
     {
@@ -28,7 +80,7 @@ export default function SettingsPage() {
       items: [
         {
           label: "Assigned User Identifier",
-          desc: "Assigned #482910",
+          desc: `Assigned #${userProfile?.userNumber || "000000"}`,
           action: "view",
         },
         {
@@ -46,7 +98,7 @@ export default function SettingsPage() {
           desc: "Show checkmarks when messages are viewed",
           toggle: true,
           value: readReceipts,
-          onToggle: () => setReadReceipts(!readReceipts),
+          onToggle: handleReadReceipts,
         },
         {
           label: "Disappearing Messages",
@@ -68,7 +120,7 @@ export default function SettingsPage() {
           desc: "Alerts for incoming calls and messages",
           toggle: true,
           value: notifications,
-          onToggle: () => setNotifications(!notifications),
+          onToggle: handleNotifications,
         },
         {
           label: "Appearance",

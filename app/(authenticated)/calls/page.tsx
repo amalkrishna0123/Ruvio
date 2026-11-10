@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Phone,
@@ -11,19 +11,38 @@ import {
   PhoneCall,
   Search,
 } from "lucide-react";
-import { sampleCalls, sampleUsers } from "@/lib/mock-data";
 import {
   Avatar,
   SearchBar,
   EmptyState,
   BottomNavigation,
 } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
+import { subscribeCallHistory } from "@/lib/firebase/calls-service";
+import { CallRecord } from "@/types";
 
 export default function CallsPage() {
+  const { userProfile } = useAuth();
+  const [calls, setCalls] = useState<CallRecord[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "missed">("all");
 
-  const filtered = sampleCalls.filter((c) => {
+  useEffect(() => {
+    if (!userProfile?.id) {
+      setIsLoading(false);
+      return;
+    }
+
+    const unsubscribe = subscribeCallHistory(userProfile.id, (realCalls) => {
+      setCalls(realCalls);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile?.id]);
+
+  const filtered = calls.filter((c) => {
     const matches =
       c.participant.name.toLowerCase().includes(search.toLowerCase()) ||
       c.participant.userNumber.includes(search);
@@ -57,7 +76,7 @@ export default function CallsPage() {
         </div>
 
         <Link
-          href={`/call/direct-audio?name=${encodeURIComponent(sampleUsers[0].name)}`}
+          href="/connect"
           className="flex h-9 items-center gap-1.5 rounded-lg bg-[#1F5C4A] px-3 text-xs font-semibold text-white hover:bg-[#164638] transition-colors shadow-xs"
         >
           <Phone className="h-3.5 w-3.5" />
@@ -101,7 +120,11 @@ export default function CallsPage() {
 
       {/* Call list */}
       <main className="flex-1 divide-y divide-[#E3E5E1]/50 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 text-xs text-[#6C716D]">
+            Loading call logs...
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<PhoneCall className="w-6 h-6 text-[#1F5C4A]" />}
             title="No call history"
@@ -119,6 +142,7 @@ export default function CallsPage() {
                   <Avatar
                     name={call.participant.name}
                     userNumber={call.participant.userNumber}
+                    avatarUrl={call.participant.avatarUrl}
                     status={call.participant.status}
                     size="md"
                   />

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -12,12 +12,32 @@ import {
   Shield,
   CheckCheck,
 } from "lucide-react";
-import { sampleNotifications } from "@/lib/mock-data";
 import { AppNotification } from "@/types";
 import { EmptyState, BottomNavigation } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
+import {
+  subscribeUserNotifications,
+  markNotificationAsRead,
+} from "@/lib/firebase/connections-service";
 
 export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState<AppNotification[]>(sampleNotifications);
+  const { userProfile } = useAuth();
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (!userProfile?.id) {
+      setIsLoading(false);
+      return;
+    }
+
+    const unsubscribe = subscribeUserNotifications(userProfile.id, (realNotifs) => {
+      setNotifications(realNotifs);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile?.id]);
 
   const getNotifIcon = (type: AppNotification["type"]) => {
     switch (type) {
@@ -34,7 +54,12 @@ export default function NotificationsPage() {
     }
   };
 
-  const handleMarkAllRead = () => {
+  const handleMarkAllRead = async () => {
+    for (const n of notifications) {
+      if (n.isUnread) {
+        await markNotificationAsRead(n.id).catch(() => {});
+      }
+    }
     setNotifications((prev) => prev.map((n) => ({ ...n, isUnread: false })));
   };
 
@@ -68,7 +93,7 @@ export default function NotificationsPage() {
           <button
             type="button"
             onClick={handleMarkAllRead}
-            className="flex items-center gap-1 text-xs font-semibold text-[#1F5C4A] hover:underline px-2 py-1"
+            className="flex items-center gap-1 text-xs font-semibold text-[#1F5C4A] hover:underline px-2 py-1 cursor-pointer"
           >
             <CheckCheck className="h-3.5 w-3.5" />
             <span>Mark all read</span>
@@ -78,7 +103,11 @@ export default function NotificationsPage() {
 
       {/* Notifications feed */}
       <main className="flex-1 divide-y divide-[#E3E5E1]/50 overflow-y-auto">
-        {notifications.length === 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 text-xs text-[#6C716D]">
+            Loading notifications...
+          </div>
+        ) : notifications.length === 0 ? (
           <EmptyState
             icon={<Bell className="w-6 h-6 text-[#1F5C4A]" />}
             title="All caught up"

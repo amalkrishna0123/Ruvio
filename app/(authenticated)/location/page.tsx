@@ -13,10 +13,11 @@ import {
   Clock,
   Compass,
 } from "lucide-react";
-import { sampleUsers } from "@/lib/mock-data";
 import { Avatar, PrimaryButton, SecondaryButton } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 export default function LocationPage() {
+  const { userProfile } = useAuth();
   const [isLiveSharing, setIsLiveSharing] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -87,18 +88,6 @@ export default function LocationPage() {
           </span>
         </div>
 
-        {/* Nearby Contact marker */}
-        <div className="absolute top-1/3 right-1/4 flex flex-col items-center">
-          <Link
-            href="/location/loc_elena"
-            className="flex flex-col items-center hover:scale-105 transition-transform"
-          >
-            <Avatar name="Elena Rostova" size="sm" className="ring-2 ring-white shadow-md" />
-            <span className="mt-1 rounded-md bg-white/95 px-1.5 py-0.5 text-[10px] font-medium text-[#181A19] shadow-xs border border-[#E3E5E1]">
-              Elena (1.2 km)
-            </span>
-          </Link>
-        </div>
 
         {/* Search Bar overlay */}
         <div className="absolute top-3 inset-x-3 z-10">

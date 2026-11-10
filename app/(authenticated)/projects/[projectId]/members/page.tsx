@@ -1,44 +1,96 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, UserPlus, Shield, MoreVertical, Trash2 } from "lucide-react";
-import { sampleProjects, sampleUsers, currentUser } from "@/lib/mock-data";
+import { ArrowLeft, UserPlus, Trash2 } from "lucide-react";
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { searchGenuineUser } from "@/lib/firebase/connections-service";
+import { User, Project } from "@/types";
 import { Avatar, PrimaryButton } from "@/components/common";
 
 export default function ProjectMembersPage() {
   const params = useParams();
-  const projectId = (params?.projectId as string) || "prj_mesh_protocol";
-  const project =
-    sampleProjects.find((p) => p.id === projectId) || sampleProjects[0];
+  const projectId = (params?.projectId as string) || "";
 
-  const [members, setMembers] = useState([
-    { ...currentUser, role: "Owner" },
-    { ...sampleUsers[0], role: "Admin" },
-    { ...sampleUsers[1], role: "Member" },
-    { ...sampleUsers[2], role: "Member" },
-  ]);
+  const [project, setProject] = useState<Project | null>(null);
+  const [members, setMembers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [newUserNumber, setNewUserNumber] = useState("");
+  const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
-  const handleAddMember = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!projectId) return;
+
+    let isMounted = true;
+    getDoc(doc(db, "projects", projectId)).then((snap) => {
+      if (snap.exists() && isMounted) {
+        const d = snap.data();
+        const p: Project = {
+          id: snap.id,
+          name: d.name || "Workspace",
+          description: d.description || "",
+          status: d.status || "active",
+          owner: d.owner,
+          memberCount: d.members?.length || 1,
+          members: d.members || [],
+          lastActivity: d.lastActivity || "Recently",
+        };
+        setProject(p);
+        setMembers(p.members);
+      }
+      if (isMounted) setIsLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [projectId]);
+
+  const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    const candidate = sampleUsers.find((u) => u.userNumber === newUserNumber);
-    if (candidate) {
-      setMembers((prev) => [...prev, { ...candidate, role: "Member" }]);
+    setErrorStatus(null);
+    if (!newUserNumber.trim() || newUserNumber.length !== 6) {
+      setErrorStatus("Please enter a valid 6-digit User Number");
+      return;
+    }
+
+    try {
+      const candidate = await searchGenuineUser(newUserNumber);
+      if (!candidate) {
+        setErrorStatus(`No user found with identifier #${newUserNumber}.`);
+        return;
+      }
+
+      // Add to Firestore project members array
+      const projectRef = doc(db, "projects", projectId);
+      await updateDoc(projectRef, {
+        members: arrayUnion(candidate),
+      });
+
+      setMembers((prev) => [...prev.filter((m) => m.id !== candidate.id), candidate]);
       setShowAddModal(false);
       setNewUserNumber("");
-    } else {
-      alert("No user found with this number.");
+    } catch (err: any) {
+      setErrorStatus(err?.message || "Failed to grant access.");
     }
   };
 
-  const handleRemove = (id: string, name: string) => {
-    if (confirm(`Remove ${name} from ${project.name}?`)) {
-      setMembers((prev) => prev.filter((m) => m.id !== id));
-    }
+  const handleRemove = async (id: string, name: string) => {
+    if (!confirm(`Remove ${name} from ${project?.name || "workspace"}?`)) return;
+
+    const target = members.find((m) => m.id === id);
+    if (!target) return;
+
+    const projectRef = doc(db, "projects", projectId);
+    await updateDoc(projectRef, {
+      members: arrayRemove(target),
+    });
+
+    setMembers((prev) => prev.filter((m) => m.id !== id));
   };
 
   return (
@@ -47,7 +99,7 @@ export default function ProjectMembersPage() {
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-[#E3E5E1] bg-white px-3">
         <div className="flex items-center gap-2">
           <Link
-            href={`/projects/${project.id}`}
+            href={`/projects/${projectId}`}
             className="flex h-9 w-9 items-center justify-center rounded-lg text-[#181A19] hover:bg-[#F0F1EE] active:scale-95 transition-colors"
             aria-label="Back"
           >
@@ -65,7 +117,10 @@ export default function ProjectMembersPage() {
 
         <button
           type="button"
-          onClick={() => setShowAddModal(true)}
+          onClick={() => {
+            setErrorStatus(null);
+            setShowAddModal(true);
+          }}
           className="flex h-9 items-center gap-1 rounded-lg bg-[#E8F2EE] px-3 text-xs font-semibold text-[#1F5C4A] hover:bg-[#D5E8DF] transition-colors"
         >
           <UserPlus className="h-3.5 w-3.5" />
@@ -75,53 +130,67 @@ export default function ProjectMembersPage() {
 
       {/* Members list */}
       <main className="flex-1 divide-y divide-[#E3E5E1]/60 overflow-y-auto">
-        {members.map((member) => (
-          <div
-            key={member.id}
-            className="flex items-center justify-between p-3.5 hover:bg-[#FAFAF8] transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Avatar
-                name={member.name}
-                userNumber={member.userNumber}
-                status={member.status}
-                size="md"
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-[#181A19]">
-                    {member.name}
-                  </span>
-                  <span
-                    className={`rounded px-1.5 py-0.2 text-[10px] font-semibold uppercase ${
-                      member.role === "Owner"
-                        ? "bg-[#1F5C4A] text-white"
-                        : member.role === "Admin"
-                        ? "bg-[#E8F2EE] text-[#1F5C4A]"
-                        : "bg-[#F0F1EE] text-[#6C716D]"
-                    }`}
-                  >
-                    {member.role}
-                  </span>
-                </div>
-                <div className="text-xs text-[#6C716D]">
-                  #{member.userNumber} · {member.email}
-                </div>
-              </div>
-            </div>
-
-            {member.role !== "Owner" && (
-              <button
-                type="button"
-                onClick={() => handleRemove(member.id, member.name)}
-                className="p-1.5 text-[#9B9E9C] hover:text-[#B94A48] hover:bg-[#FBEAEA] rounded-lg transition-colors"
-                title="Remove Member"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 text-xs text-[#6C716D]">
+            Loading members...
           </div>
-        ))}
+        ) : members.length === 0 ? (
+          <div className="flex items-center justify-center py-20 text-xs text-[#6C716D]">
+            No members assigned yet.
+          </div>
+        ) : (
+          members.map((member) => {
+            const isOwner = project?.owner?.id === member.id;
+            return (
+              <div
+                key={member.id}
+                className="flex items-center justify-between p-3.5 hover:bg-[#FAFAF8] transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar
+                    name={member.name}
+                    userNumber={member.userNumber}
+                    avatarUrl={member.avatarUrl}
+                    status={member.status}
+                    size="md"
+                  />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-[#181A19]">
+                        {member.name}
+                      </span>
+                      <span
+                        className={`rounded px-1.5 py-0.2 text-[10px] font-semibold uppercase ${
+                          isOwner
+                            ? "bg-[#1F5C4A] text-white"
+                            : member.role === "admin"
+                            ? "bg-[#E8F2EE] text-[#1F5C4A]"
+                            : "bg-[#F0F1EE] text-[#6C716D]"
+                        }`}
+                      >
+                        {isOwner ? "Owner" : member.role || "Member"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-[#6C716D]">
+                      #{member.userNumber} · {member.email}
+                    </div>
+                  </div>
+                </div>
+
+                {!isOwner && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(member.id, member.name)}
+                    className="p-1.5 text-[#9B9E9C] hover:text-[#B94A48] hover:bg-[#FBEAEA] rounded-lg transition-colors cursor-pointer"
+                    title="Remove Member"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}
       </main>
 
       {/* Add Member Modal */}
@@ -144,6 +213,10 @@ export default function ProjectMembersPage() {
                 placeholder="e.g. 362174"
                 className="h-11 w-full rounded-xl bg-[#F0F1EE] px-3.5 font-mono text-sm text-[#181A19] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#1F5C4A] border border-[#E3E5E1]"
               />
+
+              {errorStatus && (
+                <p className="text-xs text-[#B94A48]">{errorStatus}</p>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <PrimaryButton type="submit" className="flex-1 text-xs">

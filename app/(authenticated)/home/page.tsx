@@ -1,15 +1,49 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { UserPlus, MessageSquarePlus, Search, ChevronDown, Plus } from "lucide-react";
-import { sampleConversations, sampleStories } from "@/lib/mock-data";
 import { UserRow, BottomNavigation } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
+import { subscribeConversations } from "@/lib/firebase/messaging-service";
+import { ref as rtdbRef, onValue } from "firebase/database";
+import { rtdb } from "@/lib/firebase/config";
+import { Conversation } from "@/types";
 
 export default function HomePage() {
+  const { userProfile } = useAuth();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [presenceMap, setPresenceMap] = useState<Record<string, { state?: string }>>({});
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
 
-  const filtered = sampleConversations.filter((c) => {
+  // 1. Subscribe to genuine conversations
+  useEffect(() => {
+    if (!userProfile?.id) {
+      setIsLoading(false);
+      return;
+    }
+
+    const unsubscribe = subscribeConversations(userProfile.id, (realConvs) => {
+      setConversations(realConvs);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile?.id]);
+
+  // 2. Subscribe to Realtime Database presence for genuine online status
+  useEffect(() => {
+    const presenceRef = rtdbRef(rtdb, "presence");
+    const unsubscribe = onValue(presenceRef, (snapshot) => {
+      const val = snapshot.val() || {};
+      setPresenceMap(val);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const filtered = conversations.filter((c) => {
     const q = search.toLowerCase();
     return (
       c.participant.name.toLowerCase().includes(q) ||
@@ -49,30 +83,67 @@ export default function HomePage() {
           </h1>
         </div>
 
-        {/* Story Ring Row */}
+        {/* Story Ring Row - Authentic Status Bar */}
         <div className="relative z-10 flex items-center gap-4 overflow-x-auto pb-1">
           <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
-            <button type="button" className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-white/20 border-2 border-dashed border-white/50 text-white hover:bg-white/30 active:scale-95 transition-all cursor-pointer" aria-label="Add story">
+            <Link
+              href="/connect"
+              className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-white/20 border-2 border-dashed border-white/50 text-white hover:bg-white/30 active:scale-95 transition-all cursor-pointer"
+              aria-label="Add connection"
+            >
               <Plus className="h-6 w-6" strokeWidth={2.2} />
-            </button>
+            </Link>
             <span className="text-[11px] text-white/75 font-medium">Add</span>
           </div>
-          {sampleStories.map((story) => (
-            <div key={story.id} className="flex flex-col items-center gap-1.5 flex-shrink-0">
-              <div className={story.unread ? 'h-[58px] w-[58px] rounded-full p-[2.5px] bg-gradient-to-br from-white via-white/70 to-white/30 shadow-md' : 'h-[58px] w-[58px] rounded-full p-[2.5px] bg-white/30'}>
-                <div className="h-full w-full rounded-full overflow-hidden bg-neutral-400">
-                  <img src={story.avatarUrl} alt={story.name} className="h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
+
+          {/* Genuine active conversation participant rings */}
+          {conversations.slice(0, 5).map((conv) => {
+            const isOnline = presenceMap[conv.participant.id]?.state === "online";
+            return (
+              <Link
+                key={conv.id}
+                href={`/chat/${conv.id}`}
+                className="flex flex-col items-center gap-1.5 flex-shrink-0"
+              >
+                <div
+                  className={`relative h-[58px] w-[58px] rounded-full p-[2.5px] transition-all ${
+                    isOnline
+                      ? "bg-gradient-to-br from-[#22C55E] via-[#22C55E]/80 to-[#22C55E]/40 shadow-md"
+                      : "bg-gradient-to-br from-white/30 via-white/15 to-white/5"
+                  }`}
+                >
+                  <div className="h-full w-full rounded-full overflow-hidden bg-neutral-800 flex items-center justify-center text-white text-xs font-semibold">
+                    {conv.participant.avatarUrl ? (
+                      <img
+                        src={conv.participant.avatarUrl}
+                        alt={conv.participant.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      conv.participant.name.slice(0, 2).toUpperCase()
+                    )}
+                  </div>
+                  {/* Green dot on story circle only when user is online */}
+                  {isOnline && (
+                    <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full bg-[#22C55E] border-2 border-[#0C0C0E]" />
+                  )}
                 </div>
-              </div>
-              <span className="text-[11px] text-white/75 font-medium">{story.name}</span>
-            </div>
-          ))}
+                <span className="text-[11px] text-white/75 font-medium truncate max-w-[60px]">
+                  {conv.participant.name.split(" ")[0]}
+                </span>
+              </Link>
+            );
+          })}
         </div>
       </div>
 
       {/* Dark Conversation Feed */}
       <main className="flex-1 overflow-y-auto bg-[#0C0C0E]">
-        {filtered.length === 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 text-white/40 text-xs">
+            Loading conversations...
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center px-6">
             <div className="h-14 w-14 rounded-full bg-white/10 flex items-center justify-center mb-4">
               <MessageSquarePlus className="w-6 h-6 text-white/50" />
@@ -88,25 +159,28 @@ export default function HomePage() {
           </div>
         ) : (
           <div>
-            {filtered.map((conv) => (
-              <UserRow
-                key={conv.id}
-                href={`/chat/${conv.id}`}
-                name={conv.participant.name}
-                userNumber={conv.participant.userNumber}
-                avatarUrl={conv.participant.avatarUrl}
-                status={conv.participant.status}
-                subtitle={conv.lastMessage.text}
-                timestamp={conv.lastMessage.timestamp}
-                unreadCount={conv.unreadCount}
-                isPinned={conv.isPinned}
-                isMuted={conv.isMuted}
-                isOutgoing={conv.lastMessage.isOutgoing}
-                messageStatus={conv.lastMessage.status}
-                hasPhotoMedia={conv.lastMessage.hasPhotoMedia}
-                theme="dark"
-              />
-            ))}
+            {filtered.map((conv) => {
+              const isOnline = presenceMap[conv.participant.id]?.state === "online";
+              return (
+                <UserRow
+                  key={conv.id}
+                  href={`/chat/${conv.id}`}
+                  name={conv.participant.name}
+                  userNumber={conv.participant.userNumber}
+                  avatarUrl={conv.participant.avatarUrl}
+                  status={isOnline ? "online" : "offline"}
+                  subtitle={conv.lastMessage.text}
+                  timestamp={conv.lastMessage.timestamp}
+                  unreadCount={conv.unreadCount}
+                  isPinned={conv.isPinned}
+                  isMuted={conv.isMuted}
+                  isOutgoing={conv.lastMessage.isOutgoing}
+                  messageStatus={conv.lastMessage.status}
+                  hasPhotoMedia={conv.lastMessage.hasPhotoMedia}
+                  theme="dark"
+                />
+              );
+            })}
           </div>
         )}
       </main>

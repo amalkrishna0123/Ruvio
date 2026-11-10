@@ -7,72 +7,133 @@ import {
   ArrowLeft,
   Phone,
   Video,
-  Users,
-  FolderGit2,
-  Lock,
 } from "lucide-react";
-import { sampleProjects, sampleUsers, currentUser } from "@/lib/mock-data";
-import { Message } from "@/types";
-import { MessageBubble, MessageComposer, Avatar } from "@/components/common";
+import {
+  collection,
+  doc,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+  getDoc,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { Message, Project } from "@/types";
+import { MessageBubble, MessageComposer } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 export default function ProjectChatPage() {
   const params = useParams();
-  const projectId = (params?.projectId as string) || "prj_mesh_protocol";
-  const project =
-    sampleProjects.find((p) => p.id === projectId) || sampleProjects[0];
+  const projectId = (params?.projectId as string) || "";
+  const { userProfile } = useAuth();
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "p_msg_1",
-      conversationId: projectId,
-      senderId: sampleUsers[0].id,
-      senderName: sampleUsers[0].name,
-      content: "Team, the test results on the decentralized mesh relay are published in the files tab.",
-      timestamp: "09:30 AM",
-      isOutgoing: false,
-      status: "read",
+  const [project, setProject] = useState<Project>({
+    id: projectId,
+    name: "Workspace Chat",
+    description: "",
+    status: "active",
+    owner: {
+      id: "",
+      name: "Owner",
+      userNumber: "",
+      email: "",
+      status: "online",
     },
-    {
-      id: "p_msg_2",
-      conversationId: projectId,
-      senderId: sampleUsers[1].id,
-      senderName: sampleUsers[1].name,
-      content: "Reviewing now. Latency overhead is under 4%, which passes our target benchmark.",
-      timestamp: "09:44 AM",
-      isOutgoing: false,
-      status: "read",
-    },
-    {
-      id: "p_msg_3",
-      conversationId: projectId,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      content: "Excellent. I will push the signed binaries to the repository this afternoon.",
-      timestamp: "10:02 AM",
-      isOutgoing: true,
-      status: "read",
-    },
-  ]);
+    memberCount: 1,
+    members: [],
+    lastActivity: "Recently",
+  });
 
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [fileCount, setFileCount] = useState<number>(0);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  // 1. Fetch genuine project record
+  useEffect(() => {
+    if (!projectId) return;
+
+    getDoc(doc(db, "projects", projectId)).then((snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        setProject({
+          id: snap.id,
+          name: d.name || "Workspace Chat",
+          description: d.description || "",
+          status: d.status || "active",
+          owner: d.owner,
+          memberCount: d.members?.length || 1,
+          members: d.members || [],
+          lastActivity: d.lastActivity || "Recently",
+        });
+      }
+    });
+
+    // Count files
+    const unsubFiles = onSnapshot(collection(db, "projects", projectId, "files"), (snap) => {
+      setFileCount(snap.size);
+    });
+
+    return () => unsubFiles();
+  }, [projectId]);
+
+  // 2. Subscribe to genuine project messages
+  useEffect(() => {
+    if (!projectId) return;
+
+    const msgsRef = collection(db, "projects", projectId, "messages");
+    const q = query(msgsRef, orderBy("createdAt", "asc"));
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const list: Message[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          list.push({
+            id: d.id,
+            conversationId: projectId,
+            senderId: data.senderId,
+            senderName: data.senderName,
+            senderAvatar: data.senderAvatar,
+            content: data.content || "",
+            timestamp: data.timestamp || "Just now",
+            isOutgoing: data.senderId === userProfile?.id,
+            status: data.status || "delivered",
+            replyTo: data.replyTo,
+          });
+        });
+        setMessages(list);
+      },
+      (err) => {
+        console.warn("Project messages error:", err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [projectId, userProfile?.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSendMessage = (text: string) => {
-    const newMsg: Message = {
-      id: `p_msg_${Date.now()}`,
+  const handleSendMessage = async (text: string) => {
+    if (!userProfile || !projectId) return;
+
+    const now = new Date();
+    const timeStr = now
+      .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      .toLowerCase();
+
+    const msgsRef = collection(db, "projects", projectId, "messages");
+    await addDoc(msgsRef, {
       conversationId: projectId,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
+      senderId: userProfile.id,
+      senderName: userProfile.name,
+      senderAvatar: userProfile.avatarUrl || "",
       content: text,
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      isOutgoing: true,
+      timestamp: timeStr,
       status: "delivered",
       replyTo: replyingTo
         ? {
@@ -80,9 +141,10 @@ export default function ProjectChatPage() {
             senderName: replyingTo.senderName || "Member",
             text: replyingTo.content,
           }
-        : undefined,
-    };
-    setMessages((prev) => [...prev, newMsg]);
+        : null,
+      createdAt: serverTimestamp(),
+    });
+
     setReplyingTo(null);
   };
 
@@ -139,26 +201,33 @@ export default function ProjectChatPage() {
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#FAFAF8] border-b border-[#E3E5E1] text-[11px] text-[#6C716D]">
         <div className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-[#2F7D5B]" />
-          <span>4 members online</span>
+          <span>{project.memberCount} members</span>
         </div>
         <Link
           href={`/projects/${project.id}/files`}
           className="text-[#1F5C4A] font-medium hover:underline"
         >
-          View Files (4)
+          View Files ({fileCount})
         </Link>
       </div>
 
       {/* Messages */}
       <main className="flex-1 overflow-y-auto p-4 space-y-1">
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            showSenderName={true}
-            onReply={(m) => setReplyingTo(m)}
-          />
-        ))}
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center py-20 text-xs text-[#6C716D]">
+            <p>Welcome to {project.name} workspace channel.</p>
+            <p className="mt-1">Messages posted here are visible to all workspace members.</p>
+          </div>
+        ) : (
+          messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              showSenderName={true}
+              onReply={(m) => setReplyingTo(m)}
+            />
+          ))
+        )}
         <div ref={endRef} />
       </main>
 

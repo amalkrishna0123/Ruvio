@@ -4,15 +4,17 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ArrowRight, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { useAuth } from "@/lib/firebase/auth-context";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { sendOtp } = useAuth();
   const [userNumber, setUserNumber] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showNumber, setShowNumber] = useState(false);
 
-  const handleSendOTP = (e: React.FormEvent) => {
+  const handleSendOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userNumber.trim()) {
       setError("Please enter your 6-digit User Number");
@@ -24,9 +26,16 @@ export default function LoginPage() {
     }
     setError("");
     setIsLoading(true);
-    setTimeout(() => {
-      router.push(`/verify-otp?number=${userNumber}`);
-    }, 450);
+
+    try {
+      const res = await sendOtp(userNumber);
+      const emailParam = res?.maskedEmail ? `&maskedEmail=${encodeURIComponent(res.maskedEmail)}` : "";
+      const otpParam = res?.otpCode ? `&otp=${encodeURIComponent(res.otpCode)}` : "";
+      router.push(`/verify-otp?number=${userNumber}${emailParam}${otpParam}`);
+    } catch (err: any) {
+      setIsLoading(false);
+      setError(err?.message || "Verification request failed. Please verify your user number.");
+    }
   };
 
   return (

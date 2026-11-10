@@ -1,21 +1,40 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { Plus, FolderGit2, Search, Filter } from "lucide-react";
-import { sampleProjects } from "@/lib/mock-data";
 import {
   SearchBar,
   ProjectCard,
   EmptyState,
   BottomNavigation,
 } from "@/components/common";
+import { useAuth } from "@/lib/firebase/auth-context";
+import { subscribeProjects } from "@/lib/firebase/projects-service";
+import { Project } from "@/types";
 
 export default function ProjectsPage() {
+  const { userProfile } = useAuth();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const filtered = sampleProjects.filter((p) => {
+  useEffect(() => {
+    if (!userProfile?.id) {
+      setIsLoading(false);
+      return;
+    }
+
+    const unsubscribe = subscribeProjects(userProfile.id, (realProjects) => {
+      setProjects(realProjects);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile?.id]);
+
+  const filtered = projects.filter((p) => {
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.description.toLowerCase().includes(search.toLowerCase());
@@ -34,7 +53,7 @@ export default function ProjectsPage() {
             Workspaces & Projects
           </h1>
           <span className="text-[11px] text-[#6C716D]">
-            {sampleProjects.length} active encrypted spaces
+            {projects.length} active encrypted spaces
           </span>
         </div>
 
@@ -75,7 +94,11 @@ export default function ProjectsPage() {
 
       {/* Projects List */}
       <main className="flex-1 p-3.5 space-y-3 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20 text-xs text-[#6C716D]">
+            Loading workspaces...
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<FolderGit2 className="w-6 h-6 text-[#1F5C4A]" />}
             title="No projects found"
