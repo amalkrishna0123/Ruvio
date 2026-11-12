@@ -1,44 +1,57 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MessageSquare, FolderGit2, PhoneCall, User } from "lucide-react";
-
-interface NavItem {
-  label: string;
-  href: string;
-  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-  badge?: number;
-}
-
-const navItems: NavItem[] = [
-  {
-    label: "Chats",
-    href: "/home",
-    icon: MessageSquare,
-    badge: 2,
-  },
-  {
-    label: "Calls",
-    href: "/call/conv_chelsea?name=Chelsea%20Apanta&type=video",
-    icon: PhoneCall,
-  },
-  {
-    label: "Projects",
-    href: "/projects",
-    icon: FolderGit2,
-  },
-  {
-    label: "Profile",
-    href: "/profile",
-    icon: User,
-  },
-];
+import { useAuth } from "@/lib/firebase/auth-context";
+import { subscribeUserConnections } from "@/lib/firebase/connections-service";
 
 export default function BottomNavigation({ theme = "dark" }: { theme?: "dark" | "light" }) {
   const pathname = usePathname();
   const isDark = theme === "dark";
+  const { userProfile } = useAuth();
+  const [hasConnections, setHasConnections] = useState(false);
+
+  // Subscribe to connections to enable/disable Calls button
+  useEffect(() => {
+    if (!userProfile?.id) return;
+    const unsub = subscribeUserConnections(userProfile.id, (conns) => {
+      setHasConnections(conns.length > 0);
+    });
+    return () => unsub();
+  }, [userProfile?.id]);
+
+  const navItems = [
+    {
+      label: "Chats",
+      href: "/home",
+      icon: MessageSquare,
+      badge: 0,
+      disabled: false,
+    },
+    {
+      label: "Calls",
+      href: "/calls",
+      icon: PhoneCall,
+      badge: 0,
+      disabled: !hasConnections,
+    },
+    {
+      label: "Projects",
+      href: "/projects",
+      icon: FolderGit2,
+      badge: 0,
+      disabled: false,
+    },
+    {
+      label: "Profile",
+      href: "/profile",
+      icon: User,
+      badge: 0,
+      disabled: false,
+    },
+  ];
 
   return (
     <nav
@@ -54,6 +67,27 @@ export default function BottomNavigation({ theme = "dark" }: { theme?: "dark" | 
           pathname === item.href ||
           (item.href !== "/home" && pathname?.startsWith(item.href));
         const Icon = item.icon;
+
+        if (item.disabled) {
+          return (
+            <button
+              key={item.href}
+              type="button"
+              disabled
+              className={`relative flex flex-1 flex-col items-center justify-center py-1.5 select-none cursor-not-allowed ${
+                isDark ? "text-neutral-700" : "text-neutral-300"
+              }`}
+              title="Add a connection to use Calls"
+            >
+              <div className="relative">
+                <Icon className="h-5 w-5" strokeWidth={1.7} />
+              </div>
+              <span className="mt-1 text-[11px] tracking-tight font-normal">
+                {item.label}
+              </span>
+            </button>
+          );
+        }
 
         return (
           <Link
@@ -72,7 +106,7 @@ export default function BottomNavigation({ theme = "dark" }: { theme?: "dark" | 
                 }`}
                 strokeWidth={isActive ? 2.3 : 1.7}
               />
-              {item.badge && item.badge > 0 ? (
+              {item.badge > 0 ? (
                 <span className={`absolute -top-1.5 -right-2.5 flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-bold ${
                   isDark ? "bg-white text-black" : "bg-black text-white"
                 }`}>

@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronLeft,
   MoreHorizontal,
   Video,
-  Phone,
+  Mic,
 } from "lucide-react";
 import { Message, User } from "@/types";
 import {
@@ -21,6 +21,8 @@ import {
   sendMessage,
   subscribeTyping,
   reportTyping,
+  subscribeRecording,
+  reportRecording,
   subscribePresence,
   markConversationAsRead,
 } from "@/lib/firebase/messaging-service";
@@ -51,8 +53,10 @@ export default function PrivateChatPage() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
-  const [isTyping, setIsTyping] = useState<boolean>(false);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isTypingOther, setIsTypingOther] = useState<boolean>(false);
+  const [isRecordingOther, setIsRecordingOther] = useState<boolean>(false);
+  const [isRecordingSelf, setIsRecordingSelf] = useState<boolean>(false);
+  const [recordingDuration, setRecordingDuration] = useState<number>(0);
   const [isUploading, setIsUploading] = useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -60,6 +64,7 @@ export default function PrivateChatPage() {
   const docInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 1. Fetch genuine conversation & participant info from Firestore
   useEffect(() => {
@@ -115,25 +120,37 @@ export default function PrivateChatPage() {
     return () => unsubscribe();
   }, [participant.id]);
 
-  // 3. Subscribe to genuine messages
+  // 3. Mark conversation as read initially and on window focus
   useEffect(() => {
     if (!conversationId || !userProfile?.id) return;
 
     markConversationAsRead(conversationId, userProfile.id);
+
+    const onFocus = () => {
+      markConversationAsRead(conversationId, userProfile.id);
+    };
+
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [conversationId, userProfile?.id]);
+
+  // 4. Subscribe to genuine messages in real time
+  useEffect(() => {
+    if (!conversationId || !userProfile?.id) return;
 
     const unsubscribe = subscribeMessages(
       conversationId,
       userProfile.id,
       (realMsgs) => {
         setMessages(realMsgs);
+
+        // If there are unread incoming messages while viewing this chat, mark read immediately
         if (realMsgs.length > 0) {
-          const lastMsg = realMsgs[realMsgs.length - 1];
-          // If the last message was sent by current user and is not yet read by recipient,
-          // make sure conversation record reflects its true status (delivered, not read)
-          if (lastMsg.isOutgoing && lastMsg.status !== "read") {
-            updateDoc(doc(db, "conversations", conversationId), {
-              "lastMessage.status": lastMsg.status,
-            }).catch(() => {});
+          const hasUnreadIncoming = realMsgs.some(
+            (m) => !m.isOutgoing && m.status !== "read"
+          );
+          if (hasUnreadIncoming) {
+            markConversationAsRead(conversationId, userProfile.id);
           }
         }
       }
@@ -142,28 +159,53 @@ export default function PrivateChatPage() {
     return () => unsubscribe();
   }, [conversationId, userProfile?.id]);
 
-  // 4. Subscribe to genuine typing status
+  // 5. Subscribe to real-time typing status from receiver
   useEffect(() => {
     if (!conversationId || !userProfile?.id) return;
     const unsubscribe = subscribeTyping(
       conversationId,
       userProfile.id,
       (typingState) => {
-        setIsTyping(typingState);
+        setIsTypingOther(typingState);
       }
     );
     return () => unsubscribe();
   }, [conversationId, userProfile?.id]);
 
-  // Auto-scroll
+  // 6. Subscribe to real-time voice recording status from receiver
+  useEffect(() => {
+    if (!conversationId || !userProfile?.id) return;
+    const unsubscribe = subscribeRecording(
+      conversationId,
+      userProfile.id,
+      (recordingState) => {
+        setIsRecordingOther(recordingState);
+      }
+    );
+    return () => unsubscribe();
+  }, [conversationId, userProfile?.id]);
+
+  // Auto-scroll when messages or indicators change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+  }, [messages, isTypingOther, isRecordingOther]);
 
-  // Send message
+  // Clean up typing and recording reports on unmount
+  useEffect(() => {
+    return () => {
+      if (conversationId && userProfile?.id) {
+        reportTyping(conversationId, userProfile.id, false);
+        reportRecording(conversationId, userProfile.id, false);
+      }
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    };
+  }, [conversationId, userProfile?.id]);
+
+  // Send text message
   const handleSendMessage = async (text: string) => {
     if (!userProfile || !conversationId) return;
 
+    // Immediately stop typing indicator
     reportTyping(conversationId, userProfile.id, false);
 
     await sendMessage(conversationId, userProfile, text, {
@@ -179,16 +221,18 @@ export default function PrivateChatPage() {
     setReplyingTo(null);
   };
 
-  // Real voice recording via MediaRecorder & Cloudinary upload
-  const handleSendVoiceNote = async () => {
-    if (!userProfile || !conversationId) return;
+  // Typing reporter handler from composer
+  const handleTypingChange = useCallback(
+    (isTyping: boolean) => {
+      if (!conversationId || !userProfile?.id) return;
+      reportTyping(conversationId, userProfile.id, isTyping);
+    },
+    [conversationId, userProfile?.id]
+  );
 
-    if (isRecording) {
-      // Stop recording and dispatch upload
-      mediaRecorderRef.current?.stop();
-      setIsRecording(false);
-      return;
-    }
+  // Start voice recording with live RTDB indicator
+  const handleStartRecording = async () => {
+    if (!userProfile || !conversationId) return;
 
     try {
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
@@ -196,7 +240,14 @@ export default function PrivateChatPage() {
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
       const recorder = new MediaRecorder(stream);
       audioChunksRef.current = [];
 
@@ -206,41 +257,96 @@ export default function PrivateChatPage() {
         }
       };
 
-      const startTime = Date.now();
-
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const durationSec = Math.max(1, Math.round((Date.now() - startTime) / 1000));
-        const durationStr = `0:${durationSec < 10 ? `0${durationSec}` : durationSec}`;
-
-        setIsUploading(true);
-        try {
-          const uploadRes = await uploadVoiceNoteToCloudinary(audioBlob, durationSec);
-          await sendMessage(conversationId, userProfile, "Voice note", {
-            audioDuration: durationStr,
-            audioWaveform: [30, 45, 60, 35, 75, 55, 90, 70, 40, 65, 80, 45, 60, 75, 40, 25, 65, 80, 50, 30],
-            attachment: {
-              type: "file",
-              url: uploadRes.url,
-              fileName: "Voice note.webm",
-              fileSize: `${Math.round((uploadRes.bytes || 2048) / 1024)} KB`,
-            },
-          });
-        } catch (err: any) {
-          alert(`Failed to upload voice note: ${err?.message || err}`);
-        } finally {
-          setIsUploading(false);
-        }
-      };
-
       mediaRecorderRef.current = recorder;
       recorder.start();
-      setIsRecording(true);
+
+      setIsRecordingSelf(true);
+      setRecordingDuration(0);
+
+      // Notify recipient in real time via RTDB
+      reportRecording(conversationId, userProfile.id, true);
+
+      // Start duration counter
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
     } catch (err) {
       console.warn("Could not start audio recording:", err);
       alert("Microphone permission required to record voice notes.");
     }
+  };
+
+  // Stop recording and send voice note
+  const handleStopAndSendRecording = async () => {
+    if (!userProfile || !conversationId) return;
+
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    setIsRecordingSelf(false);
+    reportRecording(conversationId, userProfile.id, false);
+
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+
+    recorder.onstop = async () => {
+      recorder.stream.getTracks().forEach((track) => track.stop());
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      const durationSec = Math.max(1, recordingDuration);
+      const durationStr = `0:${durationSec < 10 ? `0${durationSec}` : durationSec}`;
+
+      // Generate dynamic waveform array with randomized peaks for natural WhatsApp visualization
+      const waveformBars: number[] = [];
+      for (let i = 0; i < 24; i++) {
+        waveformBars.push(Math.floor(25 + Math.random() * 70));
+      }
+
+      setIsUploading(true);
+      try {
+        const uploadRes = await uploadVoiceNoteToCloudinary(audioBlob, durationSec);
+        await sendMessage(conversationId, userProfile, "Voice note", {
+          audioDuration: durationStr,
+          audioWaveform: waveformBars,
+          attachment: {
+            type: "file",
+            url: uploadRes.url,
+            fileName: "Voice note.webm",
+            fileSize: `${Math.round((uploadRes.bytes || 2048) / 1024)} KB`,
+          },
+        });
+      } catch (err: any) {
+        alert(`Failed to upload voice note: ${err?.message || err}`);
+      } finally {
+        setIsUploading(false);
+      }
+    };
+
+    recorder.stop();
+  };
+
+  // Cancel / discard voice recording
+  const handleCancelRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    setIsRecordingSelf(false);
+    setRecordingDuration(0);
+
+    if (conversationId && userProfile?.id) {
+      reportRecording(conversationId, userProfile.id, false);
+    }
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stream.getTracks().forEach((track) => track.stop());
+      recorder.stop();
+    }
+    audioChunksRef.current = [];
   };
 
   // Attachment button click trigger
@@ -290,7 +396,7 @@ export default function PrivateChatPage() {
     }
   };
 
-  // Real Document selection & Cloudinary upload (supports multiple files)
+  // Real Document selection & Cloudinary upload
   const handleDocFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !userProfile || !conversationId) return;
@@ -341,7 +447,6 @@ export default function PrivateChatPage() {
           });
         },
         async () => {
-          // If permission denied or unavailable, send default location
           await sendMessage(conversationId, userProfile, "Location Check-in", {
             attachment: {
               type: "location",
@@ -357,7 +462,7 @@ export default function PrivateChatPage() {
 
   return (
     <div className="flex h-dvh flex-col bg-white">
-      {/* Hidden file pickers for genuine Cloudinary uploads (supports multiple selection) */}
+      {/* Hidden file pickers for genuine Cloudinary uploads */}
       <input
         ref={imageInputRef}
         type="file"
@@ -376,7 +481,7 @@ export default function PrivateChatPage() {
       />
 
       {/* 2026 Ultra-clean Header (Image 1 Left) */}
-      <header className="sticky top-0 z-30 flex h-18 w-full flex-shrink-0 items-center justify-between bg-white px-3 border-b border-neutral-100">
+      <header className="sticky top-0 z-30 flex h-18 w-full flex-shrink-0 items-center justify-between bg-white px-3 border-b border-neutral-100 select-none">
         {/* Back Button in soft circle */}
         <Link
           href="/home"
@@ -386,7 +491,7 @@ export default function PrivateChatPage() {
           <ChevronLeft className="h-5 w-5 -translate-x-0.5" strokeWidth={2.2} />
         </Link>
 
-        {/* Center: Profile avatar with green online dot + Centered name */}
+        {/* Center: Profile avatar with green online dot + Centered name & real-time indicator */}
         <div className="flex flex-col items-center justify-center">
           <div className="relative">
             <Avatar
@@ -394,7 +499,6 @@ export default function PrivateChatPage() {
               avatarUrl={participant.avatarUrl}
               size="sm"
             />
-            {/* Green online dot centered at the bottom of avatar when genuinely online */}
             {isOnline && (
               <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-2.5 w-2.5 rounded-full bg-[#22C55E] border-2 border-white" />
             )}
@@ -402,15 +506,28 @@ export default function PrivateChatPage() {
           <span className="mt-1 text-[13px] font-semibold tracking-tight text-neutral-900 leading-none">
             {participant.name}
           </span>
-          <span className="text-[10px] text-neutral-400 mt-0.5">
-            {isOnline ? "Active now" : (participantPresence.lastSeen || "Offline")}
-          </span>
+
+          {/* Dynamic real-time subtitle: Recording > Typing > Online / Last seen */}
+          {isRecordingOther ? (
+            <span className="flex items-center gap-1 text-[11px] font-medium text-[#22C55E] mt-0.5 animate-pulse">
+              <Mic className="w-3 h-3 text-[#22C55E]" />
+              <span>recording audio...</span>
+            </span>
+          ) : isTypingOther ? (
+            <span className="text-[11px] font-medium text-[#22C55E] mt-0.5 animate-pulse">
+              typing...
+            </span>
+          ) : (
+            <span className="text-[10px] text-neutral-400 mt-0.5">
+              {isOnline ? "Active now" : (participantPresence.lastSeen || "Offline")}
+            </span>
+          )}
         </div>
 
         {/* Right Action: Video Call launcher + More Options Button */}
         <div className="flex items-center gap-1.5">
           <Link
-            href={`/call/${conversationId}?name=${encodeURIComponent(participant.name)}&type=video`}
+            href={`/call/${conversationId}?name=${encodeURIComponent(participant.name)}&type=video&recipientId=${participant.id}`}
             className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F0F1F5] text-neutral-800 hover:bg-[#E5E7EB] active:scale-95 transition-all"
             title="Start Video Call"
             aria-label="Start video call"
@@ -419,7 +536,7 @@ export default function PrivateChatPage() {
           </Link>
           <button
             type="button"
-            onClick={() => router.push(`/call/${conversationId}?name=${encodeURIComponent(participant.name)}&type=audio`)}
+            onClick={() => router.push(`/call/${conversationId}?name=${encodeURIComponent(participant.name)}&type=audio&recipientId=${participant.id}`)}
             className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F0F1F5] text-neutral-800 hover:bg-[#E5E7EB] active:scale-95 transition-all cursor-pointer"
             aria-label="More options"
           >
@@ -445,10 +562,29 @@ export default function PrivateChatPage() {
           ))
         )}
 
-        {/* Typing indicator */}
-        {isTyping && (
-          <div className="flex items-center gap-2 text-xs text-neutral-400 py-2 pl-2">
-            <div className="flex items-center gap-1 bg-[#ECEEF2] px-3.5 py-2 rounded-full">
+        {/* WhatsApp-Style Live Voice Recording Indicator Bubble (receiver screen) */}
+        {isRecordingOther && (
+          <div className="flex items-center gap-2 text-xs py-2 pl-2 animate-fade-in">
+            <div className="flex items-center gap-2 bg-[#ECEEF2] px-3.5 py-2 rounded-full text-neutral-700 shadow-2xs">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
+              </span>
+              <div className="flex items-center gap-[2px] h-3">
+                <span className="w-1 bg-[#22C55E] rounded-full animate-pulse" style={{ height: "60%", animationDelay: "0ms" }} />
+                <span className="w-1 bg-[#22C55E] rounded-full animate-pulse" style={{ height: "100%", animationDelay: "150ms" }} />
+                <span className="w-1 bg-[#22C55E] rounded-full animate-pulse" style={{ height: "40%", animationDelay: "300ms" }} />
+                <span className="w-1 bg-[#22C55E] rounded-full animate-pulse" style={{ height: "80%", animationDelay: "100ms" }} />
+              </div>
+              <span className="text-[12px] font-medium text-neutral-600">Recording audio...</span>
+            </div>
+          </div>
+        )}
+
+        {/* WhatsApp-Style Typing Indicator Bubble (receiver screen) */}
+        {isTypingOther && !isRecordingOther && (
+          <div className="flex items-center gap-2 text-xs py-2 pl-2 animate-fade-in">
+            <div className="flex items-center gap-1.5 bg-[#ECEEF2] px-3.5 py-2 rounded-full shadow-2xs">
               <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-bounce" style={{ animationDelay: "0ms" }} />
               <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-bounce" style={{ animationDelay: "150ms" }} />
               <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-bounce" style={{ animationDelay: "300ms" }} />
@@ -469,10 +605,14 @@ export default function PrivateChatPage() {
       {/* Message Composer (Image 1 Left) */}
       <MessageComposer
         onSendMessage={handleSendMessage}
-        onSendVoiceNote={handleSendVoiceNote}
+        onSendVoiceNote={isRecordingSelf ? handleStopAndSendRecording : handleStartRecording}
+        onCancelRecording={handleCancelRecording}
+        onTyping={handleTypingChange}
         replyingTo={replyingTo}
         onCancelReply={() => setReplyingTo(null)}
         onSendAttachment={handleSendAttachment}
+        isRecording={isRecordingSelf}
+        recordingDuration={recordingDuration}
       />
     </div>
   );

@@ -2,10 +2,12 @@ import {
   collection,
   query,
   where,
-  orderBy,
   onSnapshot,
   addDoc,
   serverTimestamp,
+  doc,
+  updateDoc,
+  getDoc,
 } from "firebase/firestore";
 import {
   ref as rtdbRef,
@@ -13,6 +15,8 @@ import {
   onValue,
   push as rtdbPush,
   remove as rtdbRemove,
+  off,
+  get as rtdbGet,
 } from "firebase/database";
 import { db, rtdb } from "./config";
 import { CallRecord, User } from "@/types";
@@ -57,7 +61,7 @@ export function subscribeCallHistory(
         records.push({
           id: docSnap.id,
           participant: otherParticipant,
-          type: d.type || "video",
+          type: d.type || "audio",
           direction: d.direction || (d.caller?.id === userId ? "outgoing" : "incoming"),
           timestamp: d.timestampStr || "Recent",
           duration: d.duration,
@@ -65,9 +69,7 @@ export function subscribeCallHistory(
         });
       });
 
-      // Sort descending by creation timestamp in memory
       records.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-
       onUpdate(records);
     },
     (err) => {
@@ -91,9 +93,20 @@ export async function recordCallLog(data: {
   const now = new Date();
   const timeStr = `${now.toLocaleDateString([], { month: "short", day: "numeric" })}, ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 
+  // Sanitize caller/recipient — no undefined fields allowed in Firestore
+  const sanitize = (u: User) => ({
+    id: u.id || "",
+    name: u.name || "User",
+    userNumber: u.userNumber || "",
+    email: u.email || "",
+    avatarUrl: u.avatarUrl || "",
+    status: u.status || "offline",
+    bio: u.bio || "",
+  });
+
   await addDoc(callsRef, {
-    caller: data.caller,
-    recipient: data.recipient,
+    caller: sanitize(data.caller),
+    recipient: sanitize(data.recipient),
     participantIds: [data.caller.id, data.recipient.id],
     type: data.type,
     direction: data.direction,
@@ -103,9 +116,99 @@ export async function recordCallLog(data: {
   });
 }
 
+// ─── Incoming Call Notification via RTDB ────────────────────────────────────
+
+export interface IncomingCallPayload {
+  callId: string;
+  callType: "audio" | "video";
+  callerName: string;
+  callerAvatar: string;
+  callerId: string;
+}
+
 /**
- * WebRTC Calling Signaling via Firebase Realtime Database
+ * Signals an incoming call to the recipient through Realtime Database.
  */
+export async function signalIncomingCall(
+  callId: string,
+  recipientId: string,
+  caller: User,
+  callType: "audio" | "video"
+) {
+  const incomingRef = rtdbRef(rtdb, `incomingCalls/${recipientId}`);
+  await rtdbSet(incomingRef, {
+    callId,
+    callType,
+    callerName: caller.name || "Unknown",
+    callerAvatar: caller.avatarUrl || "",
+    callerId: caller.id,
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Clears the incoming call notification for a user.
+ */
+export async function clearIncomingCall(recipientId: string) {
+  const incomingRef = rtdbRef(rtdb, `incomingCalls/${recipientId}`);
+  await rtdbRemove(incomingRef).catch(() => {});
+}
+
+/**
+ * Subscribes to incoming call notifications for the given user.
+ * Returns an unsubscribe function.
+ */
+export function subscribeIncomingCalls(
+  userId: string,
+  onIncoming: (payload: IncomingCallPayload | null) => void
+) {
+  if (!userId) return () => {};
+  const incomingRef = rtdbRef(rtdb, `incomingCalls/${userId}`);
+  const listener = onValue(incomingRef, (snap) => {
+    const val = snap.val();
+    if (!val) {
+      onIncoming(null);
+      return;
+    }
+    // Auto-expire stale calls (older than 60 seconds)
+    if (Date.now() - (val.timestamp || 0) > 60000) {
+      rtdbRemove(incomingRef).catch(() => {});
+      onIncoming(null);
+      return;
+    }
+    onIncoming(val as IncomingCallPayload);
+  });
+  return () => off(incomingRef, "value", listener);
+}
+
+/**
+ * Updates the call status in RTDB (accepted / rejected / ended).
+ */
+export async function updateCallStatus(
+  callId: string,
+  status: "ringing" | "accepted" | "rejected" | "ended"
+) {
+  const statusRef = rtdbRef(rtdb, `calls/${callId}/status`);
+  await rtdbSet(statusRef, status);
+}
+
+/**
+ * Subscribes to the call status.
+ */
+export function subscribeCallStatus(
+  callId: string,
+  onStatus: (status: string | null) => void
+) {
+  if (!callId) return () => {};
+  const statusRef = rtdbRef(rtdb, `calls/${callId}/status`);
+  const listener = onValue(statusRef, (snap) => {
+    onStatus(snap.val());
+  });
+  return () => off(statusRef, "value", listener);
+}
+
+// ─── WebRTC Signaling Session ────────────────────────────────────────────────
+
 export class WebRTCCallSession {
   private callId: string;
   private currentUserId: string;
@@ -113,6 +216,7 @@ export class WebRTCCallSession {
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private isCaller: boolean = false;
+  private iceCandidateBuffer: RTCIceCandidateInit[] = [];
 
   constructor(callId: string, currentUserId: string, isCaller: boolean) {
     this.callId = callId;
@@ -120,17 +224,21 @@ export class WebRTCCallSession {
     this.isCaller = isCaller;
   }
 
-  async startLocalMedia(video: boolean = true, audio: boolean = true): Promise<MediaStream | null> {
+  async startLocalMedia(video: boolean = false, audio: boolean = true): Promise<MediaStream | null> {
     try {
       if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
         this.localStream = await navigator.mediaDevices.getUserMedia({
           video: video ? { facingMode: "user" } : false,
-          audio,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
         return this.localStream;
       }
     } catch (err) {
-      console.warn("Could not capture local hardware media stream:", err);
+      console.warn("Could not capture local media stream:", err);
     }
     return null;
   }
@@ -143,6 +251,7 @@ export class WebRTCCallSession {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
       ],
     };
 
@@ -164,6 +273,7 @@ export class WebRTCCallSession {
       };
     }
 
+    // Add local tracks to the peer connection
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         if (this.localStream && this.pc) {
@@ -172,62 +282,82 @@ export class WebRTCCallSession {
       });
     }
 
-    // Exchange ICE candidates through Realtime Database
     const candidateChannel = this.isCaller ? "callerCandidates" : "calleeCandidates";
     const remoteCandidateChannel = this.isCaller ? "calleeCandidates" : "callerCandidates";
 
+    // Send ICE candidates via RTDB
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
         const candidatesRef = rtdbRef(rtdb, `calls/${this.callId}/signaling/${candidateChannel}`);
-        rtdbPush(candidatesRef, event.candidate.toJSON());
+        rtdbPush(candidatesRef, event.candidate.toJSON()).catch(() => {});
       }
     };
 
-    // Listen for remote ICE candidates
+    // Listen for remote ICE candidates and drain buffer after remote description is set
     const remoteCandidatesRef = rtdbRef(rtdb, `calls/${this.callId}/signaling/${remoteCandidateChannel}`);
     onValue(remoteCandidatesRef, (snapshot) => {
       snapshot.forEach((child) => {
         const candidate = child.val();
-        if (candidate && this.pc?.remoteDescription) {
+        if (!candidate) return;
+        if (this.pc?.remoteDescription) {
           this.pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+        } else {
+          this.iceCandidateBuffer.push(candidate);
         }
       });
     });
 
-    // Listen for SDP answers / offers
-    const callRef = rtdbRef(rtdb, `calls/${this.callId}/signaling`);
     if (this.isCaller) {
-      // Caller: create and send offer, wait for answer
-      this.pc.createOffer().then((offer) => {
-        this.pc?.setLocalDescription(offer);
-        rtdbSet(rtdbRef(rtdb, `calls/${this.callId}/signaling/offer`), {
-          type: offer.type,
-          sdp: offer.sdp,
-        });
-      });
+      // Caller: create offer → set local → write to RTDB → wait for answer
+      this.pc
+        .createOffer()
+        .then((offer) => {
+          this.pc?.setLocalDescription(offer);
+          rtdbSet(rtdbRef(rtdb, `calls/${this.callId}/signaling/offer`), {
+            type: offer.type,
+            sdp: offer.sdp,
+          });
+        })
+        .catch(() => {});
 
       onValue(rtdbRef(rtdb, `calls/${this.callId}/signaling/answer`), (snap) => {
         const answer = snap.val();
         if (answer && !this.pc?.currentRemoteDescription) {
-          this.pc?.setRemoteDescription(new RTCSessionDescription(answer)).catch(() => {});
+          this.pc
+            ?.setRemoteDescription(new RTCSessionDescription(answer))
+            .then(() => this.drainIceCandidates())
+            .catch(() => {});
         }
       });
     } else {
-      // Callee: listen for offer, create answer
+      // Callee: listen for offer → create answer → write to RTDB
       onValue(rtdbRef(rtdb, `calls/${this.callId}/signaling/offer`), (snap) => {
         const offer = snap.val();
         if (offer && !this.pc?.currentRemoteDescription) {
-          this.pc?.setRemoteDescription(new RTCSessionDescription(offer)).then(() => {
-            this.pc?.createAnswer().then((answer) => {
+          this.pc
+            ?.setRemoteDescription(new RTCSessionDescription(offer))
+            .then(() => this.drainIceCandidates())
+            .then(() => this.pc?.createAnswer())
+            .then((answer) => {
+              if (!answer) return;
               this.pc?.setLocalDescription(answer);
               rtdbSet(rtdbRef(rtdb, `calls/${this.callId}/signaling/answer`), {
                 type: answer.type,
                 sdp: answer.sdp,
               });
-            });
-          });
+            })
+            .catch(() => {});
         }
       });
+    }
+  }
+
+  private drainIceCandidates() {
+    while (this.iceCandidateBuffer.length > 0) {
+      const candidate = this.iceCandidateBuffer.shift();
+      if (candidate && this.pc?.remoteDescription) {
+        this.pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+      }
     }
   }
 
@@ -248,8 +378,8 @@ export class WebRTCCallSession {
     this.remoteStream?.getTracks().forEach((t) => t.stop());
     this.pc?.close();
     this.pc = null;
-    // Clear signaling channel
+    // Clear signaling channel in RTDB
     rtdbRemove(rtdbRef(rtdb, `calls/${this.callId}/signaling`)).catch(() => {});
+    rtdbRemove(rtdbRef(rtdb, `calls/${this.callId}/status`)).catch(() => {});
   }
 }
-

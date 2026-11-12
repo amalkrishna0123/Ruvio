@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Phone,
   Video,
@@ -9,7 +9,7 @@ import {
   PhoneOutgoing,
   PhoneMissed,
   PhoneCall,
-  Search,
+  Users,
 } from "lucide-react";
 import {
   Avatar,
@@ -19,14 +19,19 @@ import {
 } from "@/components/common";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { subscribeCallHistory } from "@/lib/firebase/calls-service";
-import { CallRecord } from "@/types";
+import { subscribeUserConnections } from "@/lib/firebase/connections-service";
+import { CallRecord, User } from "@/types";
+import Link from "next/link";
 
 export default function CallsPage() {
   const { userProfile } = useAuth();
+  const router = useRouter();
   const [calls, setCalls] = useState<CallRecord[]>([]);
+  const [connections, setConnections] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "missed">("all");
+  const [showNewCall, setShowNewCall] = useState(false);
 
   useEffect(() => {
     if (!userProfile?.id) {
@@ -34,12 +39,19 @@ export default function CallsPage() {
       return;
     }
 
-    const unsubscribe = subscribeCallHistory(userProfile.id, (realCalls) => {
+    const unsubCalls = subscribeCallHistory(userProfile.id, (realCalls) => {
       setCalls(realCalls);
       setIsLoading(false);
     });
 
-    return () => unsubscribe();
+    const unsubConns = subscribeUserConnections(userProfile.id, (conns) => {
+      setConnections(conns);
+    });
+
+    return () => {
+      unsubCalls();
+      unsubConns();
+    };
   }, [userProfile?.id]);
 
   const filtered = calls.filter((c) => {
@@ -62,6 +74,16 @@ export default function CallsPage() {
     }
   };
 
+  const initiateCall = (contact: User, type: "audio" | "video") => {
+    if (!userProfile) return;
+    // callId = sorted IDs joined, so both sides agree on the same callId
+    const callId = [userProfile.id, contact.id].sort().join("_") + `_${Date.now()}`;
+    router.push(
+      `/call/${callId}?name=${encodeURIComponent(contact.name)}&type=${type}&recipientId=${contact.id}`
+    );
+    setShowNewCall(false);
+  };
+
   return (
     <div className="flex min-h-dvh flex-col bg-white">
       {/* Top Header */}
@@ -75,14 +97,78 @@ export default function CallsPage() {
           </span>
         </div>
 
-        <Link
-          href="/connect"
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-[#1F5C4A] px-3 text-xs font-semibold text-white hover:bg-[#164638] transition-colors shadow-xs"
+        <button
+          type="button"
+          onClick={() => setShowNewCall((prev) => !prev)}
+          className="flex h-9 items-center gap-1.5 rounded-lg bg-[#1F5C4A] px-3 text-xs font-semibold text-white hover:bg-[#164638] transition-colors shadow-xs cursor-pointer"
         >
           <Phone className="h-3.5 w-3.5" />
           <span>New Call</span>
-        </Link>
+        </button>
       </header>
+
+      {/* New Call — Connections Sheet */}
+      {showNewCall && (
+        <div className="bg-[#FAFAF8] border-b border-[#E3E5E1] p-3 animate-fade-in">
+          <p className="text-xs font-semibold text-[#181A19] mb-2">Call a connection</p>
+          {connections.length === 0 ? (
+            <div className="flex flex-col items-center py-4 text-center text-xs text-[#6C716D]">
+              <Users className="w-6 h-6 mb-2 text-[#1F5C4A]" />
+              <span>No connections yet.</span>
+              <Link
+                href="/connect"
+                className="mt-1.5 text-[#1F5C4A] font-semibold underline"
+              >
+                Add a connection
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#E3E5E1]/50">
+              {connections.map((contact) => (
+                <div
+                  key={contact.id}
+                  className="flex items-center justify-between py-2.5"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Avatar
+                      name={contact.name}
+                      userNumber={contact.userNumber}
+                      avatarUrl={contact.avatarUrl}
+                      status={contact.status}
+                      size="sm"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-[#181A19]">{contact.name}</p>
+                      <p className="text-[11px] text-[#6C716D]">#{contact.userNumber}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {/* Audio call */}
+                    <button
+                      type="button"
+                      onClick={() => initiateCall(contact, "audio")}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-[#1F5C4A] hover:bg-[#E8F2EE] transition-colors cursor-pointer"
+                      title="Voice Call"
+                    >
+                      <Phone className="w-4 h-4" />
+                    </button>
+                    {/* Video call */}
+                    <button
+                      type="button"
+                      onClick={() => initiateCall(contact, "video")}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-[#1F5C4A] hover:bg-[#E8F2EE] transition-colors cursor-pointer"
+                      title="Video Call"
+                    >
+                      <Video className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Search and Filters */}
       <div className="p-3 border-b border-[#E3E5E1]/60 bg-[#FAFAF8] space-y-2">
@@ -168,9 +254,10 @@ export default function CallsPage() {
                 </div>
 
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <Link
-                    href={`/call/${call.id}?type=${call.type}&name=${encodeURIComponent(call.participant.name)}`}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-[#1F5C4A] hover:bg-[#E8F2EE] transition-colors"
+                  <button
+                    type="button"
+                    onClick={() => initiateCall(call.participant, call.type)}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-[#1F5C4A] hover:bg-[#E8F2EE] transition-colors cursor-pointer"
                     title={`Call back (${call.type})`}
                   >
                     {call.type === "video" ? (
@@ -178,7 +265,7 @@ export default function CallsPage() {
                     ) : (
                       <Phone className="w-4.5 h-4.5" />
                     )}
-                  </Link>
+                  </button>
                 </div>
               </div>
             );

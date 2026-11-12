@@ -14,6 +14,8 @@ export default function HomePage() {
   const { userProfile } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, { state?: string }>>({});
+  const [typingMap, setTypingMap] = useState<Record<string, Record<string, boolean>>>({});
+  const [recordingMap, setRecordingMap] = useState<Record<string, Record<string, boolean>>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState("");
 
@@ -32,15 +34,29 @@ export default function HomePage() {
     return () => unsubscribe();
   }, [userProfile?.id]);
 
-  // 2. Subscribe to Realtime Database presence for genuine online status
+  // 2. Subscribe to Realtime Database presence, typing, and recording states
   useEffect(() => {
     const presenceRef = rtdbRef(rtdb, "presence");
-    const unsubscribe = onValue(presenceRef, (snapshot) => {
+    const unsubPresence = onValue(presenceRef, (snapshot) => {
       const val = snapshot.val() || {};
       setPresenceMap(val);
     });
 
-    return () => unsubscribe();
+    const typingRef = rtdbRef(rtdb, "typing");
+    const unsubTyping = onValue(typingRef, (snapshot) => {
+      setTypingMap(snapshot.val() || {});
+    });
+
+    const recordingRef = rtdbRef(rtdb, "recording");
+    const unsubRecording = onValue(recordingRef, (snapshot) => {
+      setRecordingMap(snapshot.val() || {});
+    });
+
+    return () => {
+      unsubPresence();
+      unsubTyping();
+      unsubRecording();
+    };
   }, []);
 
   const filtered = conversations.filter((c) => {
@@ -161,6 +177,23 @@ export default function HomePage() {
           <div>
             {filtered.map((conv) => {
               const isOnline = presenceMap[conv.participant.id]?.state === "online";
+              const isOtherRecording =
+                recordingMap[conv.id] &&
+                Object.keys(recordingMap[conv.id]).some(
+                  (uid) => uid !== userProfile?.id && recordingMap[conv.id][uid] === true
+                );
+              const isOtherTyping =
+                typingMap[conv.id] &&
+                Object.keys(typingMap[conv.id]).some(
+                  (uid) => uid !== userProfile?.id && typingMap[conv.id][uid] === true
+                );
+
+              const subtitleText = isOtherRecording
+                ? "recording audio..."
+                : isOtherTyping
+                ? "typing..."
+                : conv.lastMessage.text;
+
               return (
                 <UserRow
                   key={conv.id}
@@ -169,12 +202,12 @@ export default function HomePage() {
                   userNumber={conv.participant.userNumber}
                   avatarUrl={conv.participant.avatarUrl}
                   status={isOnline ? "online" : "offline"}
-                  subtitle={conv.lastMessage.text}
+                  subtitle={subtitleText}
                   timestamp={conv.lastMessage.timestamp}
                   unreadCount={conv.unreadCount}
                   isPinned={conv.isPinned}
                   isMuted={conv.isMuted}
-                  isOutgoing={conv.lastMessage.isOutgoing}
+                  isOutgoing={!isOtherRecording && !isOtherTyping && conv.lastMessage.isOutgoing}
                   messageStatus={conv.lastMessage.status}
                   hasPhotoMedia={conv.lastMessage.hasPhotoMedia}
                   theme="dark"

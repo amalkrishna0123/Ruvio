@@ -29,6 +29,9 @@ export interface Message {
   timestamp: string;
   isOutgoing: boolean;
   status: "sent" | "delivered" | "read";
+  createdAt?: any;
+  deliveredAt?: any;
+  readAt?: any;
   replyTo?: {
     id: string;
     senderName: string;
@@ -56,7 +59,9 @@ export interface Conversation {
     timestamp: string;
     isOutgoing: boolean;
     status?: "sent" | "delivered" | "read";
+    readAt?: any;
     hasPhotoMedia?: boolean;
+    senderId?: string;
   };
   unreadCount: number;
   isPinned?: boolean;

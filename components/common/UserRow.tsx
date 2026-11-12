@@ -96,9 +96,11 @@ export default function UserRow({
             {isOutgoing && messageStatus && (
               <span className="flex-shrink-0">
                 {messageStatus === "read" ? (
-                  <CheckCheck className="w-3.5 h-3.5 text-blue-400" strokeWidth={2.2} />
-                ) : (
+                  <CheckCheck className="w-3.5 h-3.5 text-[#34B7F1]" strokeWidth={2.2} />
+                ) : messageStatus === "delivered" ? (
                   <CheckCheck className={`w-3.5 h-3.5 ${isDark ? "text-[#8E8E93]" : "text-neutral-500"}`} strokeWidth={2} />
+                ) : (
+                  <Check className={`w-3.5 h-3.5 ${isDark ? "text-[#8E8E93]" : "text-neutral-500"}`} strokeWidth={2} />
                 )}
               </span>
             )}

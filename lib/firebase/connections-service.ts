@@ -83,20 +83,47 @@ export function subscribeUserConnections(
 }
 
 /**
+ * Sanitizes a User object by replacing any undefined fields with safe defaults
+ * before writing to Firestore (Firestore rejects undefined values).
+ */
+function sanitizeUserForFirestore(user: User): Record<string, any> {
+  return {
+    id: user.id || "",
+    name: user.name || "User",
+    userNumber: user.userNumber || "",
+    email: user.email || "",
+    avatarUrl: user.avatarUrl || "",
+    status: user.status || "offline",
+    bio: user.bio || "",
+    joinedDate: user.joinedDate || "",
+    role: user.role || "member",
+    // Flatten settings with defaults so no undefined values reach Firestore
+    settings: {
+      readReceipts: user.settings?.readReceipts ?? true,
+      notifications: user.settings?.notifications ?? true,
+      ephemeralTimer: user.settings?.ephemeralTimer ?? "off",
+    },
+  };
+}
+
+/**
  * Saves a genuine connection in Firestore and initializes direct conversation.
  */
 export async function addGenuineConnection(currentUser: User, contact: User) {
+  const sanitizedContact = sanitizeUserForFirestore(contact);
+  const sanitizedCurrentUser = sanitizeUserForFirestore(currentUser);
+
   // 1. Save in user's connections subcollection
   const connDocRef = doc(db, "users", currentUser.id, "connections", contact.id);
   await setDoc(connDocRef, {
-    ...contact,
+    ...sanitizedContact,
     addedAt: serverTimestamp(),
   });
 
   // 2. Mutual connection
   const reciprocalDocRef = doc(db, "users", contact.id, "connections", currentUser.id);
   await setDoc(reciprocalDocRef, {
-    ...currentUser,
+    ...sanitizedCurrentUser,
     addedAt: serverTimestamp(),
   });
 
@@ -104,19 +131,27 @@ export async function addGenuineConnection(currentUser: User, contact: User) {
   const convId = [currentUser.id, contact.id].sort().join("_");
   const convDocRef = doc(db, "conversations", convId);
 
+  const now = new Date();
+  const timeStr = now
+    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    .toLowerCase()
+    .replace(" ", "");
+
   await setDoc(
     convDocRef,
     {
       id: convId,
       type: "direct",
       participantIds: [currentUser.id, contact.id],
-      participant: contact,
-      owner: currentUser,
+      participant: sanitizedContact,
+      owner: sanitizedCurrentUser,
       lastMessage: {
         text: "Connected on Ruvio",
-        timestamp: "Just now",
+        timestamp: timeStr,
         isOutgoing: true,
         status: "sent",
+        senderId: currentUser.id,
+        hasPhotoMedia: false,
       },
       unreadCounts: {
         [currentUser.id]: 0,

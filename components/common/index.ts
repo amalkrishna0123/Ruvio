@@ -8,3 +8,4 @@ export { default as ProjectCard } from "./ProjectCard";
 export { default as MessageBubble } from "./MessageBubble";
 export { default as MessageComposer } from "./MessageComposer";
 export { PrimaryButton, SecondaryButton, IconButton } from "./Buttons";
+export { default as IncomingCallOverlay } from "./IncomingCallOverlay";

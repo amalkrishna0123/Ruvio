@@ -12,6 +12,7 @@ import {
   setDoc,
   getDoc,
   increment,
+  writeBatch,
 } from "firebase/firestore";
 import {
   ref as rtdbRef,
@@ -19,6 +20,8 @@ import {
   onValue,
   remove as rtdbRemove,
   serverTimestamp as rtdbServerTimestamp,
+  onDisconnect,
+  off,
 } from "firebase/database";
 import { db, rtdb } from "./config";
 import { Conversation, Message, User } from "@/types";
@@ -46,7 +49,6 @@ export function subscribeConversations(
       const convList: (Conversation & { updatedAtMs?: number })[] = [];
       snapshot.forEach((d) => {
         const data = d.data();
-        // Determine recipient participant from participants array/map
         const otherParticipant =
           data.participant?.id === currentUserId
             ? data.owner
@@ -65,19 +67,16 @@ export function subscribeConversations(
           data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0;
 
         const isOutgoing = data.lastMessage?.senderId === currentUserId;
-        let lastMsgStatus: "sent" | "delivered" | "read" =
-          (data.lastMessage?.status as any) || "delivered";
+        let lastMsgStatus: "sent" | "delivered" | "read" = "delivered";
 
-        // Only mark as "read" (blue ticks) when: message is outgoing AND recipient's
-        // unreadCount is 0 AND Firestore status is explicitly "read".
-        // In all other outgoing cases, show "delivered" (grey double tick).
-        const recipientId = otherParticipant?.id || "";
-        const recipientUnread = data.unreadCounts?.[recipientId] ?? 1;
         if (isOutgoing) {
-          if (data.lastMessage?.status === "read" && recipientUnread === 0) {
+          const rawStatus = data.lastMessage?.status;
+          if (rawStatus === "read") {
             lastMsgStatus = "read";
-          } else {
+          } else if (rawStatus === "delivered") {
             lastMsgStatus = "delivered";
+          } else {
+            lastMsgStatus = "sent";
           }
         }
 
@@ -90,7 +89,9 @@ export function subscribeConversations(
             timestamp: data.lastMessage?.timestamp || "",
             isOutgoing,
             status: lastMsgStatus,
+            readAt: data.lastMessage?.readAt,
             hasPhotoMedia: !!data.lastMessage?.hasPhotoMedia,
+            senderId: data.lastMessage?.senderId,
           },
           unreadCount: data.unreadCounts?.[currentUserId] || 0,
           isPinned: !!data.pinnedUsers?.[currentUserId],
@@ -99,7 +100,7 @@ export function subscribeConversations(
         });
       });
 
-      // Sort descending by updated timestamp in memory (no composite index required)
+      // Sort descending by updated timestamp in memory
       convList.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0));
 
       onUpdate(convList);
@@ -113,6 +114,7 @@ export function subscribeConversations(
 
 /**
  * Subscribes to real-time messages within a genuine conversation.
+ * Automatically acknowledges delivery of incoming messages in the background.
  */
 export function subscribeMessages(
   conversationId: string,
@@ -131,8 +133,18 @@ export function subscribeMessages(
     q,
     (snapshot) => {
       const msgs: Message[] = [];
+      const messagesToMarkDelivered: string[] = [];
+
       snapshot.forEach((d) => {
         const data = d.data();
+        const isOutgoing = data.senderId === currentUserId;
+        const msgStatus: "sent" | "delivered" | "read" = data.status || "sent";
+
+        // Track incoming messages that are still in "sent" state to mark as "delivered"
+        if (!isOutgoing && msgStatus === "sent") {
+          messagesToMarkDelivered.push(d.id);
+        }
+
         msgs.push({
           id: d.id,
           conversationId,
@@ -141,8 +153,11 @@ export function subscribeMessages(
           senderAvatar: data.senderAvatar,
           content: data.content || "",
           timestamp: data.timestamp || "Just Now",
-          isOutgoing: data.senderId === currentUserId,
-          status: data.status || "sent",
+          isOutgoing,
+          status: msgStatus,
+          createdAt: data.createdAt,
+          deliveredAt: data.deliveredAt,
+          readAt: data.readAt,
           replyTo: data.replyTo,
           audioWaveform: data.audioWaveform,
           audioDuration: data.audioDuration,
@@ -151,7 +166,23 @@ export function subscribeMessages(
           attachment: data.attachment,
         });
       });
+
       onUpdate(msgs);
+
+      // Acknowledge delivery in the background if receiver receives them
+      if (messagesToMarkDelivered.length > 0) {
+        messagesToMarkDelivered.forEach((msgId) => {
+          updateDoc(doc(db, "conversations", conversationId, "messages", msgId), {
+            status: "delivered",
+            deliveredAt: serverTimestamp(),
+          }).catch(() => {});
+        });
+
+        // Also update conversation lastMessage status if it was sent
+        updateDoc(doc(db, "conversations", conversationId), {
+          "lastMessage.status": "delivered",
+        }).catch(() => {});
+      }
     },
     (err) => {
       console.warn("Messages subscription error:", err);
@@ -161,7 +192,7 @@ export function subscribeMessages(
 }
 
 /**
- * Sends a real message to Firestore.
+ * Sends a real message to Firestore with initial "sent" status.
  */
 export async function sendMessage(
   conversationId: string,
@@ -189,7 +220,7 @@ export async function sendMessage(
     senderAvatar: sender.avatarUrl || "",
     content,
     timestamp: timeStr,
-    status: "delivered",
+    status: "sent",
     createdAt: serverTimestamp(),
   };
 
@@ -217,7 +248,7 @@ export async function sendMessage(
     "lastMessage.text": content || (extra?.attachment ? "Attachment" : "Media"),
     "lastMessage.timestamp": timeStr,
     "lastMessage.senderId": sender.id,
-    "lastMessage.status": "delivered",
+    "lastMessage.status": "sent",
     "lastMessage.hasPhotoMedia": !!(extra?.photosStack?.length || extra?.attachment?.type === "image"),
     updatedAt: serverTimestamp(),
   };
@@ -229,22 +260,40 @@ export async function sendMessage(
   await updateDoc(convRef, convUpdates).catch(() => {});
 }
 
+// ─── Real-Time Typing Indicator (RTDB) ──────────────────────────────────────
+
+let typingTimeoutMap: Record<string, any> = {};
+
 /**
- * Updates Realtime Database typing status.
+ * Immediately updates Realtime Database typing status with disconnect cleanup.
  */
-let typingTimeout: any = null;
 export function reportTyping(conversationId: string, userId: string, isTyping: boolean) {
   if (!conversationId || !userId) return;
+  const key = `${conversationId}_${userId}`;
   const userTypingRef = rtdbRef(rtdb, `typing/${conversationId}/${userId}`);
 
   if (isTyping) {
-    rtdbSet(userTypingRef, true);
-    if (typingTimeout) clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-      rtdbRemove(userTypingRef);
-    }, 2500);
+    // Clear existing timeout
+    if (typingTimeoutMap[key]) {
+      clearTimeout(typingTimeoutMap[key]);
+    }
+
+    // Set onDisconnect hook so crashes / closed tabs immediately remove typing
+    onDisconnect(userTypingRef).remove().catch(() => {});
+
+    rtdbSet(userTypingRef, true).catch(() => {});
+
+    // Debounce auto-clear after 2 seconds of inactivity
+    typingTimeoutMap[key] = setTimeout(() => {
+      rtdbRemove(userTypingRef).catch(() => {});
+      delete typingTimeoutMap[key];
+    }, 2000);
   } else {
-    rtdbRemove(userTypingRef);
+    if (typingTimeoutMap[key]) {
+      clearTimeout(typingTimeoutMap[key]);
+      delete typingTimeoutMap[key];
+    }
+    rtdbRemove(userTypingRef).catch(() => {});
   }
 }
 
@@ -262,7 +311,7 @@ export function subscribeTyping(
   }
 
   const convTypingRef = rtdbRef(rtdb, `typing/${conversationId}`);
-  return onValue(convTypingRef, (snap) => {
+  const listener = onValue(convTypingRef, (snap) => {
     const val = snap.val();
     if (!val) {
       onTypingChange(false);
@@ -271,7 +320,74 @@ export function subscribeTyping(
     const hasOther = Object.keys(val).some((uid) => uid !== currentUserId && val[uid] === true);
     onTypingChange(hasOther);
   });
+
+  return () => off(convTypingRef, "value", listener);
 }
+
+// ─── Real-Time Voice Recording Indicator (RTDB) ──────────────────────────────
+
+let recordingTimeoutMap: Record<string, any> = {};
+
+/**
+ * Immediately updates Realtime Database voice recording status with disconnect cleanup.
+ */
+export function reportRecording(conversationId: string, userId: string, isRecording: boolean) {
+  if (!conversationId || !userId) return;
+  const key = `${conversationId}_${userId}`;
+  const userRecRef = rtdbRef(rtdb, `recording/${conversationId}/${userId}`);
+
+  if (isRecording) {
+    if (recordingTimeoutMap[key]) {
+      clearTimeout(recordingTimeoutMap[key]);
+    }
+
+    // Clean up on disconnect
+    onDisconnect(userRecRef).remove().catch(() => {});
+
+    rtdbSet(userRecRef, true).catch(() => {});
+
+    // Safety timeout: max 90 seconds in case recording is abandoned
+    recordingTimeoutMap[key] = setTimeout(() => {
+      rtdbRemove(userRecRef).catch(() => {});
+      delete recordingTimeoutMap[key];
+    }, 90000);
+  } else {
+    if (recordingTimeoutMap[key]) {
+      clearTimeout(recordingTimeoutMap[key]);
+      delete recordingTimeoutMap[key];
+    }
+    rtdbRemove(userRecRef).catch(() => {});
+  }
+}
+
+/**
+ * Subscribes to real-time voice recording indicators in Realtime Database.
+ */
+export function subscribeRecording(
+  conversationId: string,
+  currentUserId: string,
+  onRecordingChange: (isOtherRecording: boolean) => void
+) {
+  if (!conversationId) {
+    onRecordingChange(false);
+    return () => {};
+  }
+
+  const convRecRef = rtdbRef(rtdb, `recording/${conversationId}`);
+  const listener = onValue(convRecRef, (snap) => {
+    const val = snap.val();
+    if (!val) {
+      onRecordingChange(false);
+      return;
+    }
+    const hasOther = Object.keys(val).some((uid) => uid !== currentUserId && val[uid] === true);
+    onRecordingChange(hasOther);
+  });
+
+  return () => off(convRecRef, "value", listener);
+}
+
+// ─── Real Presence (RTDB) ────────────────────────────────────────────────────
 
 /**
  * Subscribes to real presence and last seen of a user via Realtime Database.
@@ -286,7 +402,7 @@ export function subscribePresence(
   }
 
   const userRef = rtdbRef(rtdb, `presence/${userId}`);
-  return onValue(userRef, (snap) => {
+  const listener = onValue(userRef, (snap) => {
     const val = snap.val();
     if (!val || val.state === "offline") {
       let lastSeenText = "Offline";
@@ -299,10 +415,16 @@ export function subscribePresence(
       onPresence({ state: "online", lastSeen: "Active now" });
     }
   });
+
+  return () => off(userRef, "value", listener);
 }
 
+// ─── Real-Time Read Receipts (Firestore) ─────────────────────────────────────
+
 /**
- * Marks messages in a conversation as read ONLY when viewed by the recipient.
+ * Marks messages in a conversation as read (seen) instantly when viewed by the recipient.
+ * Updates all unread messages with readAt server timestamp, resets unread count,
+ * and updates the conversation's lastMessage status to 'read' (double blue ticks).
  */
 export async function markConversationAsRead(conversationId: string, currentUserId: string) {
   if (!conversationId || !currentUserId) return;
@@ -320,38 +442,41 @@ export async function markConversationAsRead(conversationId: string, currentUser
       [`unreadCounts.${currentUserId}`]: 0,
     };
 
-    // ONLY mark lastMessage as 'read' if current user is the RECIPIENT of the last message
-    // (meaning someone else sent it, and current user has now viewed it)
+    // Mark lastMessage as 'read' if current user is the recipient of the last message
     const isRecipientOfLastMessage =
       lastMsg && lastMsg.senderId && lastMsg.senderId !== currentUserId;
 
-    if (isRecipientOfLastMessage) {
+    if (isRecipientOfLastMessage && lastMsg.status !== "read") {
       updates["lastMessage.status"] = "read";
+      updates["lastMessage.readAt"] = serverTimestamp();
     }
 
     await updateDoc(convRef, updates).catch(() => {});
 
-    // Also update all incoming messages from the other participant to 'read'
+    // Update all incoming unread messages in the messages subcollection
     const msgsRef = collection(db, "conversations", conversationId, "messages");
     const msgsSnap = await getDocs(msgsRef).catch(() => null);
+
     if (msgsSnap && !msgsSnap.empty) {
-      const updatePromises: Promise<any>[] = [];
+      const batch = writeBatch(db);
+      let count = 0;
+
       msgsSnap.forEach((msgDoc) => {
         const d = msgDoc.data();
         if (d.senderId && d.senderId !== currentUserId && d.status !== "read") {
-          updatePromises.push(
-            updateDoc(doc(db, "conversations", conversationId, "messages", msgDoc.id), {
-              status: "read",
-            }).catch(() => {})
-          );
+          batch.update(doc(db, "conversations", conversationId, "messages", msgDoc.id), {
+            status: "read",
+            readAt: serverTimestamp(),
+          });
+          count++;
         }
       });
-      if (updatePromises.length > 0) {
-        await Promise.all(updatePromises);
+
+      if (count > 0) {
+        await batch.commit().catch(() => {});
       }
     }
   } catch (err) {
     console.warn("Error marking conversation as read:", err);
   }
 }
-
